@@ -314,7 +314,7 @@ add_ss_to_vless() {
     local vless_inbound vless_port default_ss_port ss_port ss_password ss_inbound
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path")
     vless_port=$(echo "$vless_inbound" | jq -r '.port')
-    default_ss_port=$([[ "$vless_port" == "443" ]] && echo "8388" || echo "$((vless_port + 1))")
+    default_ss_port=$([[ "$vless_port" == "443" ]] && echo "25033" || echo "$((vless_port + 1))")
     
     while true; do
         read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_ss_port}${none}): ")" ss_port || true
@@ -341,7 +341,7 @@ add_vless_to_ss() {
     local ss_inbound ss_port default_vless_port vless_port vless_uuid vless_domain key_pair private_key public_key vless_inbound
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     ss_port=$(echo "$ss_inbound" | jq -r '.port')
-    default_vless_port=$([[ "$ss_port" == "8388" ]] && echo "443" || echo "$((ss_port - 1))")
+    default_vless_port=$([[ "$ss_port" == "25033" ]] && echo "443" || echo "$((ss_port - 1))")
     
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}${default_vless_port}${none}): ")" vless_port || true
@@ -403,8 +403,8 @@ install_ss_only() {
     info "开始配置 Shadowsocks-2022..."
     local port password
     while true; do
-        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}8388${none}): ")" port || true
-        [[ -z "$port" ]] && port=8388
+        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25033${none}): ")" port || true
+        [[ -z "$port" ]] && port=25033
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
 
@@ -429,8 +429,8 @@ install_dual() {
     
     if [[ "$vless_port" == "443" ]]; then
         while true; do
-            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}8388${none}): ")" ss_port || true
-            [[ -z "$ss_port" ]] && ss_port=8388
+            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25033${none}): ")" ss_port || true
+            [[ -z "$ss_port" ]] && ss_port=25033
             if is_valid_port "$ss_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
         done
     else
@@ -808,7 +808,7 @@ non_interactive_usage() {
     --sni <domain>    SNI 域名 (默认: learn.microsoft.com)
 
   Shadowsocks 选项:
-    --ss-port <p>     Shadowsocks 端口 (默认: 8388)
+    --ss-port <p>     Shadowsocks 端口 (默认: 25033)
     --ss-pass <pass>  Shadowsocks 密码 (默认: 随机生成)
 
   示例:
@@ -854,7 +854,7 @@ non_interactive_dispatcher() {
             run_install_vless "$vless_port" "$uuid" "$sni"
             ;;
         ss)
-            [[ -z "$ss_port" ]] && ss_port=8388
+            [[ -z "$ss_port" ]] && ss_port=25033
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if ! is_valid_port "$ss_port"; then
                 error "Shadowsocks 参数无效。请检查端口。" && non_interactive_usage && exit 1
@@ -868,7 +868,7 @@ non_interactive_dispatcher() {
             [[ -z "$sni" ]] && sni="learn.microsoft.com"
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if [[ -z "$ss_port" ]]; then
-                if [[ "$vless_port" == "443" ]]; then ss_port=8388; else ss_port=$((vless_port + 1)); fi
+                if [[ "$vless_port" == "443" ]]; then ss_port=25033; else ss_port=$((vless_port + 1)); fi
             fi
             if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni" || ! is_valid_port "$ss_port"; then
                 error "双协议参数无效。请检查端口或SNI域名。" && non_interactive_usage && exit 1
