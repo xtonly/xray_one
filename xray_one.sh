@@ -601,7 +601,7 @@ view_all_info() {
             [[ "$is_quiet" = false ]] && error "VLESS配置不完整，可能已损坏。"
         else
             display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"
-            link_name_raw="$host X-reality"
+            link_name_raw="$host"
             link_name_encoded=$(echo "$link_name_raw" | sed 's/ /%20/g')
             vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=chrome&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"
             links_array+=("$vless_url")
@@ -631,7 +631,7 @@ view_all_info() {
         port=$(echo "$ss_inbound" | jq -r '.port')
         method=$(echo "$ss_inbound" | jq -r '.settings.method')
         password=$(echo "$ss_inbound" | jq -r '.settings.password')
-        link_name_raw="$host X-ss2022"
+        link_name_raw="$host-SS"
         user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
         ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
         links_array+=("$ss_url")
