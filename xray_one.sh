@@ -315,9 +315,10 @@ add_vless_to_ss() {
     info "SNI 域名将使用: ${cyan}${vless_domain}${none}"
 
     info "正在生成 Reality 密钥对..."
-    key_pair=$("$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
-    public_key=$(echo "$xray_binary_path" x25519 | awk '/Public key:/ {print $3}')
+# 尝试使用兼容模式
+     key_pair=$("$xray_binary_path" x25519 -i)
+     private_key=$(echo "$key_pair" | awk '{if (NR==1) print $3}')
+     public_key=$(echo "$key_pair" | awk '{if (NR==2) print $3}')
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
         error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
