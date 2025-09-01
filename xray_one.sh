@@ -2,29 +2,16 @@
 
 # ==============================================================================
 # Xray VLESS-Reality & Shadowsocks 2022 多功能管理脚本
-# 版本: Final v2.8 (Corrected v3)
-# 更新日志 (v2.8):
-# - [修复] 对 'check_xray_status' 函数进行加固，解决在服务初次启动后
-#   因时序问题调用 systemctl 或 xray version 可能导致脚本退出的间歇性BUG。
-# Correction 1: Standardized and fixed Reality key generation calls.
-# Correction 2: Forced key generation to use C locale for language compatibility.
-# Correction 3: Adapted key parsing for new Xray core output format (v25.8+).
-# ==============================================================================
-# v2.7: 根据用户建议，调整双协议安装模式下的提问顺序及整体排版
-# v2.6: 对所有交互式 'read' 命令进行加固，防止在 'set -e' 模式下因输入中断导致脚本意外退出
-# v2.5: 优化了配置信息输出的排版，使其更紧凑清晰
-# v2.4: 恢复了在 v2.3 版本中意外被删除的详细配置信息输出
-# v2.3: 重构安装/卸载流程, 增加密钥生成验证, 增强更新检查及服务重启逻辑
-# v2.2: 修复了在未安装Xray时，调用jq读取不存在的配置文件导致脚本退出的问题
-# v2.1: 修复了在无参数启动时因'set -u'导致的 "unbound variable" 错误
-# v2.0: 修复菜单选项颠倒BUG, 增强健壮性/IP获取/非交互模式, 优化代码实践
+# 版本: 1.0.3 修改于 yahuisme/xray-dual 的脚本 2.8
+# 更新日志 (v1.0.3):
+# - [修复] 对 'Xray 25.8.31'生成密匙文件错误的问题
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="Final v2.8 (Corrected v3)"
+readonly SCRIPT_VERSION="1.0.3"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -266,7 +253,7 @@ add_ss_to_vless() {
     local vless_inbound vless_port default_ss_port ss_port ss_password ss_inbound
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path")
     vless_port=$(echo "$vless_inbound" | jq -r '.port')
-    default_ss_port=$([[ "$vless_port" == "443" ]] && echo "8388" || echo "$((vless_port + 1))")
+    default_ss_port=$([[ "$vless_port" == "443" ]] && echo "25388" || echo "$((vless_port + 1))")
     
     while true; do
         read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_ss_port}${none}): ")" ss_port || true
@@ -293,7 +280,7 @@ add_vless_to_ss() {
     local ss_inbound ss_port default_vless_port vless_port vless_uuid vless_domain key_pair private_key public_key vless_inbound
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     ss_port=$(echo "$ss_inbound" | jq -r '.port')
-    default_vless_port=$([[ "$ss_port" == "8388" ]] && echo "443" || echo "$((ss_port - 1))")
+    default_vless_port=$([[ "$ss_port" == "25388" ]] && echo "443" || echo "$((ss_port - 1))")
     
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}${default_vless_port}${none}): ")" vless_port || true
@@ -363,8 +350,8 @@ install_ss_only() {
     info "开始配置 Shadowsocks-2022..."
     local port password
     while true; do
-        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}8388${none}): ")" port || true
-        [[ -z "$port" ]] && port=8388
+        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25388${none}): ")" port || true
+        [[ -z "$port" ]] && port=25388
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
 
@@ -389,8 +376,8 @@ install_dual() {
     
     if [[ "$vless_port" == "443" ]]; then
         while true; do
-            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}8388${none}): ")" ss_port || true
-            [[ -z "$ss_port" ]] && ss_port=8388
+            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25388${none}): ")" ss_port || true
+            [[ -z "$ss_port" ]] && ss_port=25388
             if is_valid_port "$ss_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
         done
     else
@@ -783,7 +770,7 @@ non_interactive_usage() {
     --sni <domain>    SNI 域名 (默认: learn.microsoft.com)
 
   Shadowsocks 选项:
-    --ss-port <p>     Shadowsocks 端口 (默认: 8388)
+    --ss-port <p>     Shadowsocks 端口 (默认: 25388)
     --ss-pass <pass>  Shadowsocks 密码 (默认: 随机生成)
 
   示例:
@@ -829,7 +816,7 @@ non_interactive_dispatcher() {
             run_install_vless "$vless_port" "$uuid" "$sni"
             ;;
         ss)
-            [[ -z "$ss_port" ]] && ss_port=8388
+            [[ -z "$ss_port" ]] && ss_port=25388
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if ! is_valid_port "$ss_port"; then
                 error "Shadowsocks 参数无效。请检查端口。" && non_interactive_usage && exit 1
@@ -843,7 +830,7 @@ non_interactive_dispatcher() {
             [[ -z "$sni" ]] && sni="learn.microsoft.com"
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if [[ -z "$ss_port" ]]; then
-                if [[ "$vless_port" == "443" ]]; then ss_port=8388; else ss_port=$((vless_port + 1)); fi
+                if [[ "$vless_port" == "443" ]]; then ss_port=25388; else ss_port=$((vless_port + 1)); fi
             fi
             if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni" || ! is_valid_port "$ss_port"; then
                 error "双协议参数无效。请检查端口或SNI域名。" && non_interactive_usage && exit 1
