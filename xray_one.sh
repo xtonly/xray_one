@@ -671,8 +671,8 @@ run_install_vless() {
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound
     key_pair=$("$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
-    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    private_key=$(echo "$key_pair" | awk '/PrivateKey:/ {print $2}')
+    public_key=$(echo "$key_pair" | awk '/Password:/ {print $2}')
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
         error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
