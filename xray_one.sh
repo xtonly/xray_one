@@ -3,20 +3,20 @@
 # ==============================================================================
 # Xray_One 多功能管理脚本
 # 一键生成 VLESS-Reality / AnyTLS / Shadowsocks 2022 节点
-# 版本: 1.1.2 修改于yahuisme xray-dual 2.8版本
-# 更新日志 (v1.1.2):
-# Bugfix: 修正了 AnyTLS 安装流程中,因服务未创建而导致证书安装失败的BUG.
-# ==============================================================================
-# v1.1.1: 根据用户反馈, 将 VLESS-TLS 命名修正为 AnyTLS.
-# v1.1.0: 新增 AnyTLS 节点创建功能及自动化证书申请.
-# v1.0.4: 修改了默认端口和域名, 修复了 Reality 密钥生成和解析.
+# 版本: 1.2.0 修改于yahuisme xray-dual 2.8版本
+# 更新日志 (v1.2.0):
+#   - 新增: AnyTLS 安装前进行防火墙 80 端口开放的交互式提醒.
+#   - 修复: 强制 acme.sh 使用 Let's Encrypt, 避免 ZeroSSL 注册邮箱问题.
+#   - 修复: 证书安装后自动修正文件权限, 避免 Xray 服务 permission denied.
+#   - 修复: 强制 acme.sh 更新证书, 避免因证书已存在而跳过安装的问题.
+#   - 优化: 再次确认并固化了 AnyTLS 的安装流程顺序.
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="1.1.2"
+readonly SCRIPT_VERSION="1.2.0"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -190,6 +190,21 @@ is_valid_domain() {
     [[ "$domain" =~ ^[a-zA-Z0-9-]{1,63}(\.[a-zA-Z0-9-]{1,63})+$ ]] && [[ "$domain" != *--* ]]
 }
 
+prompt_for_firewall() {
+    echo -e "${yellow}---------------------------------------------------------------${none}"
+    echo -e "${cyan}重要提示：证书申请需要从公网访问您服务器的 TCP 80 端口。${none}"
+    echo -e "请确保您已经完成以下操作："
+    echo -e "1. 在 ${magenta}云服务商控制台${none} (如阿里云/腾讯云/AWS) 的安全组中放行 TCP 80 端口。"
+    echo -e "2. 在 ${magenta}服务器本机防火墙${none} (如ufw, firewalld) 中放行 TCP 80 端口。"
+    echo -e "${yellow}---------------------------------------------------------------${none}"
+    read -p "您是否已确认 80 端口已开放? [Y/n]: " confirm_firewall || true
+    if [[ "$confirm_firewall" =~ ^[nN]$ ]]; then
+        error "操作已取消。请在开放 80 端口后重试。"
+        return 1
+    fi
+    return 0
+}
+
 check_dns() {
     local domain="$1"
     info "正在验证域名 '$domain' 是否解析到本机 IP..."
@@ -229,7 +244,12 @@ request_certificate() {
 
     # 申请证书
     info "开始为 '$domain' 申请 Let's Encrypt 证书..."
-    if ! "$acme_script_path" --issue -d "$domain" --standalone -k ec-256; then
+    if ! "$acme_script_path" --set-default-ca --server letsencrypt &> /dev/null; then
+        error "设置默认 CA 为 Let's Encrypt 失败。"
+        return 1
+    fi
+    
+    if ! "$acme_script_path" --issue --force -d "$domain" --standalone -k ec-256 --server letsencrypt; then
         error "证书申请失败。请检查 acme.sh 日志。"
         return 1
     fi
@@ -243,6 +263,9 @@ request_certificate() {
         error "证书安装失败。"
         return 1
     fi
+    
+    # 修复文件权限
+    chmod -R 755 "$cert_dir"
     success "证书已成功申请并安装！"
     return 0
 }
@@ -427,8 +450,10 @@ install_ss_only() {
 
 install_anytls_only() {
     info "开始配置 AnyTLS (VLESS-over-TLS)..."
-    info "此模式需要一个 ${red}已正确解析到本服务器 IP 的域名${none}。"
     local port uuid domain
+    
+    if ! prompt_for_firewall; then return 1; fi
+    
     while true; do
         read -p "$(echo -e " -> 请输入您的域名: ")" domain || true
         if is_valid_domain "$domain"; then
@@ -438,9 +463,7 @@ install_anytls_only() {
         fi
     done
     
-    # --- FIX START: Install Xray core BEFORE requesting certificate ---
     run_core_install || return 1
-    # --- FIX END ---
     
     if ! request_certificate "$domain"; then return 1; fi
     
