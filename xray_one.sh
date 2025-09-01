@@ -1,31 +1,24 @@
 #!/bin/bash
 
 # ==============================================================================
-# Xray VLESS-Reality & Shadowsocks 2022 多功能管理脚本
-# 版本: Final v2.8 (Corrected v3-custom port)
-# 更新日志 (v2.8):
-# - [修复] 对 'check_xray_status' 函数进行加固，解决在服务初次启动后
-#   因时序问题调用 systemctl 或 xray version 可能导致脚本退出的间歇性BUG。
+# Xray_One 多功能管理脚本
+# 一键生成 VLESS-Reality & Shadowsocks 2022 节点
+# 版本: 1.0.4 修改于yahuisme xray-dual 2.8版本
+# 更新日志 (v1.0.4):
 # Correction 1: Standardized and fixed Reality key generation calls.
 # Correction 2: Forced key generation to use C locale for language compatibility.
 # Correction 3: Adapted key parsing for new Xray core output format (v25.8+).
-# Customization: Changed default VLESS port to 25433.
+# Customization: Changed default VLESS port to 25433 & SS port to 25338.
 # ==============================================================================
-# v2.7: 根据用户建议，调整双协议安装模式下的提问顺序及整体排版
-# v2.6: 对所有交互式 'read' 命令进行加固，防止在 'set -e' 模式下因输入中断导致脚本意外退出
-# v2.5: 优化了配置信息输出的排版，使其更紧凑清晰
-# v2.4: 恢复了在 v2.3 版本中意外被删除的详细配置信息输出
-# v2.3: 重构安装/卸载流程, 增加密钥生成验证, 增强更新检查及服务重启逻辑
-# v2.2: 修复了在未安装Xray时，调用jq读取不存在的配置文件导致脚本退出的问题
-# v2.1: 修复了在无参数启动时因'set -u'导致的 "unbound variable" 错误
-# v2.0: 修复菜单选项颠倒BUG, 增强健壮性/IP获取/非交互模式, 优化代码实践
+# v1.0.4: 修改了默认端口和域名.
+# v1.0.3: 修复Xray 25.8.31申请证书的Bug.
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="Final v2.8 (Corrected v3-custom port)"
+readonly SCRIPT_VERSION="Final v2.8 (Corrected v3-custom ports)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -267,7 +260,9 @@ add_ss_to_vless() {
     local vless_inbound vless_port default_ss_port ss_port ss_password ss_inbound
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path")
     vless_port=$(echo "$vless_inbound" | jq -r '.port')
-    default_ss_port=$([[ "$vless_port" == "25433" ]] && echo "8388" || echo "$((vless_port + 1))") # MODIFIED THIS LINE
+    # --- MODIFICATION START ---
+    default_ss_port=$([[ "$vless_port" == "25433" ]] && echo "25338" || echo "$((vless_port + 1))")
+    # --- MODIFICATION END ---
     
     while true; do
         read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_ss_port}${none}): ")" ss_port || true
@@ -294,7 +289,9 @@ add_vless_to_ss() {
     local ss_inbound ss_port default_vless_port vless_port vless_uuid vless_domain key_pair private_key public_key vless_inbound
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     ss_port=$(echo "$ss_inbound" | jq -r '.port')
-    default_vless_port=$([[ "$ss_port" == "8388" ]] && echo "25433" || echo "$((ss_port - 1))") # MODIFIED THIS LINE
+    # --- MODIFICATION START ---
+    default_vless_port=$([[ "$ss_port" == "25338" ]] && echo "25433" || echo "$((ss_port - 1))")
+    # --- MODIFICATION END ---
     
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}${default_vless_port}${none}): ")" vless_port || true
@@ -310,8 +307,8 @@ add_vless_to_ss() {
     fi
     
     while true; do
-        read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}learn.microsoft.com${none}): ")" vless_domain || true
-        [[ -z "$vless_domain" ]] && vless_domain="learn.microsoft.com"
+        read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true
+        [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"
         if is_valid_domain "$vless_domain"; then break; else error "域名格式无效，请重新输入。"; fi
     done
     info "SNI 域名将使用: ${cyan}${vless_domain}${none}"
@@ -337,10 +334,8 @@ install_vless_only() {
     info "开始配置 VLESS-Reality..."
     local port uuid domain
     while true; do
-        # --- MODIFICATION START ---
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" port || true
         [[ -z "$port" ]] && port=25433
-        # --- MODIFICATION END ---
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
     
@@ -351,8 +346,8 @@ install_vless_only() {
     fi
     
     while true; do
-        read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}learn.microsoft.com${none}): ")" domain || true
-        [[ -z "$domain" ]] && domain="learn.microsoft.com"
+        read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" domain || true
+        [[ -z "$domain" ]] && domain="www.icloud.com"
         if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi
     done
     
@@ -363,8 +358,10 @@ install_ss_only() {
     info "开始配置 Shadowsocks-2022..."
     local port password
     while true; do
-        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}8388${none}): ")" port || true
-        [[ -z "$port" ]] && port=8388
+        # --- MODIFICATION START ---
+        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" port || true
+        [[ -z "$port" ]] && port=25338
+        # --- MODIFICATION END ---
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
 
@@ -382,20 +379,17 @@ install_dual() {
     local vless_port vless_uuid vless_domain ss_port ss_password
 
     while true; do
-        # --- MODIFICATION START ---
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" vless_port || true
         [[ -z "$vless_port" ]] && vless_port=25433
-        # --- MODIFICATION END ---
         if is_valid_port "$vless_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
     
-    # --- MODIFICATION START ---
-    # Adjusted logic to account for the new default VLESS port
     if [[ "$vless_port" == "25433" ]]; then
-    # --- MODIFICATION END ---
         while true; do
-            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}8388${none}): ")" ss_port || true
-            [[ -z "$ss_port" ]] && ss_port=8388
+            # --- MODIFICATION START ---
+            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" ss_port || true
+            [[ -z "$ss_port" ]] && ss_port=25338
+            # --- MODIFICATION END ---
             if is_valid_port "$ss_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
         done
     else
@@ -416,8 +410,8 @@ install_dual() {
     fi
 
     while true; do
-        read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}learn.microsoft.com${none}): ")" vless_domain || true
-        [[ -z "$vless_domain" ]] && vless_domain="learn.microsoft.com"
+        read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true
+        [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"
         if is_valid_domain "$vless_domain"; then break; else error "域名格式无效，请重新输入。"; fi
     done
 
@@ -767,7 +761,7 @@ main_menu() {
 
 # --- 非交互式安装逻辑 ---
 non_interactive_usage() {
-    cat << 'EOF'
+    cat << EOF
 
 非交互式安装用法:
   ./$(basename "$0") install --type <vless|ss|dual> [选项...]
@@ -779,10 +773,10 @@ non_interactive_usage() {
   VLESS 选项:
     --vless-port <p>  VLESS 端口 (默认: 25433)
     --uuid <uuid>     UUID (默认: 随机生成)
-    --sni <domain>    SNI 域名 (默认: learn.microsoft.com)
+    --sni <domain>    SNI 域名 (默认: www.icloud.com)
 
   Shadowsocks 选项:
-    --ss-port <p>     Shadowsocks 端口 (默认: 8388)
+    --ss-port <p>     Shadowsocks 端口 (默认: 25338)
     --ss-pass <pass>  Shadowsocks 密码 (默认: 随机生成)
 
   示例:
@@ -818,11 +812,9 @@ non_interactive_dispatcher() {
 
     case "$type" in
         vless)
-            # --- MODIFICATION START ---
             [[ -z "$vless_port" ]] && vless_port=25433
-            # --- MODIFICATION END ---
             [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
-            [[ -z "$sni" ]] && sni="learn.microsoft.com"
+            [[ -z "$sni" ]] && sni="www.icloud.com"
             if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni"; then
                 error "VLESS 参数无效。请检查端口或SNI域名。" && non_interactive_usage && exit 1
             fi
@@ -830,7 +822,9 @@ non_interactive_dispatcher() {
             run_install_vless "$vless_port" "$uuid" "$sni"
             ;;
         ss)
-            [[ -z "$ss_port" ]] && ss_port=8388
+            # --- MODIFICATION START ---
+            [[ -z "$ss_port" ]] && ss_port=25338
+            # --- MODIFICATION END ---
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if ! is_valid_port "$ss_port"; then
                 error "Shadowsocks 参数无效。请检查端口。" && non_interactive_usage && exit 1
@@ -839,15 +833,13 @@ non_interactive_dispatcher() {
             run_install_ss "$ss_port" "$ss_pass"
             ;;
         dual)
-            # --- MODIFICATION START ---
             [[ -z "$vless_port" ]] && vless_port=25433
-            # --- MODIFICATION END ---
             [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
-            [[ -z "$sni" ]] && sni="learn.microsoft.com"
+            [[ -z "$sni" ]] && sni="www.icloud.com"
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if [[ -z "$ss_port" ]]; then
                 # --- MODIFICATION START ---
-                if [[ "$vless_port" == "25433" ]]; then ss_port=8388; else ss_port=$((vless_port + 1)); fi
+                if [[ "$vless_port" == "25433" ]]; then ss_port=25338; else ss_port=$((vless_port + 1)); fi
                 # --- MODIFICATION END ---
             fi
             if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni" || ! is_valid_port "$ss_port"; then
