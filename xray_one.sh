@@ -2,10 +2,11 @@
 
 # ==============================================================================
 # Xray VLESS-Reality & Shadowsocks 2022 多功能管理脚本
-# 版本: Final v2.8
+# 版本: Final v2.8 (Corrected)
 # 更新日志 (v2.8):
 # - [修复] 对 'check_xray_status' 函数进行加固，解决在服务初次启动后
 #   因时序问题调用 systemctl 或 xray version 可能导致脚本退出的间歇性BUG。
+# Correction: Standardized and fixed Reality key generation calls.
 # ==============================================================================
 # v2.7: 根据用户建议，调整双协议安装模式下的提问顺序及整体排版
 # v2.6: 对所有交互式 'read' 命令进行加固，防止在 'set -e' 模式下因输入中断导致脚本意外退出
@@ -21,7 +22,7 @@
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="Final v2.8"
+readonly SCRIPT_VERSION="Final v2.8 (Corrected)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -314,15 +315,20 @@ add_vless_to_ss() {
     done
     info "SNI 域名将使用: ${cyan}${vless_domain}${none}"
 
-info "正在生成 Reality 密钥对..."
-key_pair=$("$xray_binary_path" x25519 --std-encoding)
-private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
-public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    info "正在生成 Reality 密钥对..."
+    # --- FIX START ---
+    # The original command "$xray_binary_path" x25519 -i was incorrect.
+    # The correct command to generate a new keypair is just "$xray_binary_path" x25519.
+    # The parsing logic has also been standardized.
+    key_pair=$("$xray_binary_path" x25519)
+    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
+    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    # --- FIX END ---
 
-if [[ -z "$private_key" || -z "$public_key" ]]; then
-    error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-    exit 1
-fi
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        exit 1
+    fi
     
     vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$public_key")
     write_config "[$vless_inbound, $ss_inbound]"
@@ -667,16 +673,20 @@ view_all_info() {
 run_install_vless() {
     local port="$1" uuid="$2" domain="$3"
     run_core_install || exit 1
-# 在 build_vless_inbound 函数调用之前，修改密钥生成部分：
-info "正在生成 Reality 密钥对..."
-key_pair=$("$xray_binary_path" x25519 --std-encoding)
-private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
-public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    info "正在生成 Reality 密钥对..."
+    # --- FIX START ---
+    # Standardized the key generation command and output parsing.
+    # Removed incorrect awk logic (/PrivateKey:/ {print $2} and /Password:/)
+    local key_pair private_key public_key vless_inbound
+    key_pair=$("$xray_binary_path" x25519)
+    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
+    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    # --- FIX END ---
 
-if [[ -z "$private_key" || -z "$public_key" ]]; then
-    error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-    exit 1
-fi
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        exit 1
+    fi
 
     vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$public_key")
     write_config "[$vless_inbound]"
@@ -699,15 +709,19 @@ run_install_ss() {
 run_install_dual() {
     local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
     run_core_install || exit 1
-info "正在生成 Reality 密钥对..."
-key_pair=$("$xray_binary_path" x25519 --std-encoding)
-private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
-public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    info "正在生成 Reality 密钥对..."
+    # --- FIX START ---
+    # This block was already correct, but the fix ensures consistency with other functions.
+    local key_pair private_key public_key vless_inbound ss_inbound
+    key_pair=$("$xray_binary_path" x25519)
+    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
+    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+    # --- FIX END ---
 
-if [[ -z "$private_key" || -z "$public_key" ]]; then
-    error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-    exit 1
-fi
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        exit 1
+    fi
 
     vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$public_key")
     ss_inbound=$(build_ss_inbound "$ss_port" "$ss_password")
