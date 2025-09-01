@@ -3,20 +3,20 @@
 # ==============================================================================
 # Xray_One 多功能管理脚本
 # 一键生成 VLESS-Reality / AnyTLS / Shadowsocks 2022 节点
-# 版本: 1.1.1 修改于yahuisme xray-dual 2.8版本
-# 更新日志 (v1.1.1):
-# Correction: 根据用户反馈, 将 VLESS-TLS 命名修正为 AnyTLS.
+# 版本: 1.1.2 修改于yahuisme xray-dual 2.8版本
+# 更新日志 (v1.1.2):
+# Bugfix: 修正了 AnyTLS 安装流程中,因服务未创建而导致证书安装失败的BUG.
 # ==============================================================================
-# v1.1.0: 新增 VLESS-TLS (AnyTLS) 节点创建功能及自动化证书申请.
+# v1.1.1: 根据用户反馈, 将 VLESS-TLS 命名修正为 AnyTLS.
+# v1.1.0: 新增 AnyTLS 节点创建功能及自动化证书申请.
 # v1.0.4: 修改了默认端口和域名, 修复了 Reality 密钥生成和解析.
-# v1.0.3: 修复Xray 25.8.31申请证书的Bug.
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="1.1.1"
+readonly SCRIPT_VERSION="1.1.2"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -438,6 +438,10 @@ install_anytls_only() {
         fi
     done
     
+    # --- FIX START: Install Xray core BEFORE requesting certificate ---
+    run_core_install || return 1
+    # --- FIX END ---
+    
     if ! request_certificate "$domain"; then return 1; fi
     
     while true; do
@@ -452,7 +456,12 @@ install_anytls_only() {
         info "已为您生成随机UUID: ${cyan}${uuid}${none}"
     fi
     
-    run_install_anytls "$port" "$uuid" "$domain"
+    local anytls_inbound
+    anytls_inbound=$(build_anytls_inbound "$port" "$uuid" "$domain")
+    write_config "[$anytls_inbound]"
+    restart_xray
+    success "AnyTLS 安装成功！"
+    view_all_info
 }
 
 install_dual() {
@@ -820,17 +829,6 @@ run_install_ss() {
     write_config "[$ss_inbound]"
     restart_xray
     success "Shadowsocks-2022 安装成功！"
-    view_all_info
-}
-
-run_install_anytls() {
-    local port="$1" uuid="$2" domain="$3"
-    run_core_install || exit 1
-    local anytls_inbound
-    anytls_inbound=$(build_anytls_inbound "$port" "$uuid" "$domain")
-    write_config "[$anytls_inbound]"
-    restart_xray
-    success "AnyTLS 安装成功！"
     view_all_info
 }
 
