@@ -2,17 +2,26 @@
 
 # ==============================================================================
 # Xray VLESS-Reality & Shadowsocks 2022 多功能管理脚本
-# 版本: Final v2.8.2
-# 更新日志 (v2.8.2):
-# - [修复] 针对 Xray 25.8.31+ 版本的密钥生成问题，使用更可靠的方法
-# - [新增] 添加对最新 Xray 版本的兼容性检查
+# 版本: Final v2.8
+# 更新日志 (v2.8):
+# - [修复] 对 'check_xray_status' 函数进行加固，解决在服务初次启动后
+#   因时序问题调用 systemctl 或 xray version 可能导致脚本退出的间歇性BUG。
+# ==============================================================================
+# v2.7: 根据用户建议，调整双协议安装模式下的提问顺序及整体排版
+# v2.6: 对所有交互式 'read' 命令进行加固，防止在 'set -e' 模式下因输入中断导致脚本意外退出
+# v2.5: 优化了配置信息输出的排版，使其更紧凑清晰
+# v2.4: 恢复了在 v2.3 版本中意外被删除的详细配置信息输出
+# v2.3: 重构安装/卸载流程, 增加密钥生成验证, 增强更新检查及服务重启逻辑
+# v2.2: 修复了在未安装Xray时，调用jq读取不存在的配置文件导致脚本退出的问题
+# v2.1: 修复了在无参数启动时因'set -u'导致的 "unbound variable" 错误
+# v2.0: 修复菜单选项颠倒BUG, 增强健壮性/IP获取/非交互模式, 优化代码实践
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="Final v2.8.2"
+readonly SCRIPT_VERSION="Final v2.8"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -98,93 +107,10 @@ check_xray_status() {
     xray_status_info=" Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}"
 }
 
+
 # --- 核心配置生成函数 ---
 generate_ss_key() {
     openssl rand -base64 16
-}
-
-# 增强的密钥对生成函数，针对 Xray 25.8.31+ 版本
-generate_reality_keypair() {
-    info "正在生成 Reality 密钥对..."
-    
-    local private_key public_key
-    
-    # 首先尝试使用 Xray 内置命令（新版本兼容方式）
-    if [[ -f "$xray_binary_path" && -x "$xray_binary_path" ]]; then
-        # 尝试多种可能的输出格式
-        local key_output
-        key_output=$("$xray_binary_path" x25519 2>/dev/null || true)
-        
-        # 尝试解析不同格式的输出
-        if echo "$key_output" | grep -q "Private key:"; then
-            # 标准格式: Private key: xxxx
-            private_key=$(echo "$key_output" | awk '/Private key:/ {print $3}')
-            public_key=$(echo "$key_output" | awk '/Public key:/ {print $3}')
-        elif echo "$key_output" | grep -q "privateKey:"; then
-            # 可能的新格式: privateKey: xxxx
-            private_key=$(echo "$key_output" | awk '/privateKey:/ {print $2}')
-            public_key=$(echo "$key_output" | awk '/publicKey:/ {print $2}')
-        elif [ $(echo "$key_output" | wc -l) -eq 2 ]; then
-            # 可能的新格式: 第一行私钥，第二行公钥
-            private_key=$(echo "$key_output" | head -n1 | tr -d '[:space:]')
-            public_key=$(echo "$key_output" | tail -n1 | tr -d '[:space:]')
-        fi
-    fi
-    
-    # 如果 Xray 方法失败，尝试使用 OpenSSL 作为备用
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        info "Xray 密钥生成失败，尝试使用 OpenSSL 备用方法..."
-        if command -v openssl &>/dev/null; then
-            # 使用 OpenSSL 生成 x25519 密钥对
-            local openssl_output
-            openssl_output=$(openssl genpkey -algorithm x25519 -outform DER 2>/dev/null | openssl asn1parse -offset 2 2>/dev/null | grep -o '[0-9A-F]*$' | xxd -r -p | base64 -w 0 2>/dev/null || true)
-            
-            if [[ -n "$openssl_output" ]]; then
-                private_key="$openssl_output"
-                public_key=$(echo -n "$private_key" | base64 -d | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 -w 0 2>/dev/null || true)
-            fi
-        fi
-    fi
-    
-    # 如果仍然失败，尝试使用更简单的方法
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        info "尝试使用简单方法生成密钥对..."
-        # 生成 32 字节的随机数据作为私钥
-        private_key=$(head -c 32 /dev/urandom | base64 -w 0)
-        # 对于公钥，我们使用一个默认值（这不是真正的公钥，但可以工作）
-        public_key="bmXOC+R1JMrzp4KW+8lGgFKQpcxHFFsSQD5EjwUesHA="
-        info "警告: 使用模拟密钥对，实际部署中可能不够安全"
-    fi
-    
-    # 如果仍然失败，提供详细错误信息
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！"
-        error "可能的原因:"
-        error "1. Xray 核心未正确安装"
-        error "2. OpenSSL 不可用"
-        error "3. 系统资源不足"
-        
-        # 尝试诊断问题
-        if [[ ! -f "$xray_binary_path" ]]; then
-            error "Xray 二进制文件不存在，尝试重新安装..."
-            run_core_install
-            # 重试 Xray 方法
-            local key_output
-            key_output=$("$xray_binary_path" x25519 2>/dev/null || true)
-            if echo "$key_output" | grep -q "Private key:"; then
-                private_key=$(echo "$key_output" | awk '/Private key:/ {print $3}')
-                public_key=$(echo "$key_output" | awk '/Public key:/ {print $3}')
-            fi
-        fi
-        
-        # 如果仍然失败，退出脚本
-        if [[ -z "$private_key" || -z "$public_key" ]]; then
-            error "无法生成密钥对，请检查系统环境并重试。"
-            exit 1
-        fi
-    fi
-    
-    echo "$private_key $public_key"
 }
 
 build_vless_inbound() {
@@ -239,12 +165,6 @@ run_core_install() {
         return 1
     fi
     
-    # 验证 Xray 是否成功安装
-    if [[ ! -f "$xray_binary_path" || ! -x "$xray_binary_path" ]]; then
-        error "Xray 安装后验证失败！二进制文件不存在或不可执行。"
-        return 1
-    fi
-    
     info "正在更新 GeoIP 和 GeoSite 数据文件..."
     if ! execute_official_script "install-geodata"; then
         error "Geo-data 更新失败！"
@@ -253,6 +173,7 @@ run_core_install() {
     
     success "Xray 核心及数据文件已准备就绪。"
 }
+
 
 # --- 输入验证函数 ---
 is_valid_port() {
@@ -296,7 +217,7 @@ install_menu() {
     draw_menu_header
     if [[ -n "$vless_exists" && -n "$ss_exists" ]]; then
         success "您已安装 VLESS-Reality + Shadowsocks-2022 双协议。"
-        info "如需修改，请使用主菜单的"修改配置"选项。\n 如需重装，请先"卸载"后，再重新"安装"。"
+        info "如需修改，请使用主菜单的“修改配置”选项。\n 如需重装，请先“卸载”后，再重新“安装”。"
         return
     elif [[ -n "$vless_exists" && -z "$ss_exists" ]]; then
         info "检测到您已安装 VLESS-Reality"
@@ -393,10 +314,15 @@ add_vless_to_ss() {
     done
     info "SNI 域名将使用: ${cyan}${vless_domain}${none}"
 
-    # 使用增强的密钥对生成函数
-    key_pair=$(generate_reality_keypair)
-    private_key=$(echo "$key_pair" | awk '{print $1}')
-    public_key=$(echo "$key_pair" | awk '{print $2}')
+    info "正在生成 Reality 密钥对..."
+    key_pair=$("$xray_binary_path" x25519)
+    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
+    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        exit 1
+    fi
     
     vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$public_key")
     write_config "[$vless_inbound, $ss_inbound]"
@@ -621,14 +547,14 @@ restart_xray() {
     if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return 1; fi
     info "正在重启 Xray 服务..."
     if ! systemctl restart xray; then
-        error "尝试重启 Xray 服务失败！请使用"查看日志"功能检查具体错误。"
+        error "尝试重启 Xray 服务失败！请使用“查看日志”功能检查具体错误。"
         return 1
     fi
     sleep 1
     if systemctl is-active --quiet xray; then
         success "Xray 服务已成功重启！"
     else
-        error "服务启动失败, 请使用"查看日志"功能检查错误。"
+        error "服务启动失败, 请使用“查看日志”功能检查错误。"
         return 1
     fi
 }
@@ -672,7 +598,7 @@ view_all_info() {
             [[ "$is_quiet" = false ]] && error "VLESS配置不完整，可能已损坏。"
         else
             display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"
-            link_name_raw="$host"
+            link_name_raw="$host X-reality"
             link_name_encoded=$(echo "$link_name_raw" | sed 's/ /%20/g')
             vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=chrome&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"
             links_array+=("$vless_url")
@@ -702,7 +628,7 @@ view_all_info() {
         port=$(echo "$ss_inbound" | jq -r '.port')
         method=$(echo "$ss_inbound" | jq -r '.settings.method')
         password=$(echo "$ss_inbound" | jq -r '.settings.password')
-        link_name_raw="$host-SS"
+        link_name_raw="$host X-ss2022"
         user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
         ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
         links_array+=("$ss_url")
@@ -736,16 +662,21 @@ view_all_info() {
     fi
 }
 
+
 # --- 核心安装逻辑函数 ---
 run_install_vless() {
     local port="$1" uuid="$2" domain="$3"
     run_core_install || exit 1
-    
-    # 使用增强的密钥对生成函数
+    info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound
-    key_pair=$(generate_reality_keypair)
-    private_key=$(echo "$key_pair" | awk '{print $1}')
-    public_key=$(echo "$key_pair" | awk '{print $2}')
+    key_pair=$("$xray_binary_path" x25519)
+    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
+    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        exit 1
+    fi
 
     vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$public_key")
     write_config "[$vless_inbound]"
@@ -768,12 +699,16 @@ run_install_ss() {
 run_install_dual() {
     local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
     run_core_install || exit 1
-    
-    # 使用增强的密钥对生成函数
+    info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound ss_inbound
-    key_pair=$(generate_reality_keypair)
-    private_key=$(echo "$key_pair" | awk '{print $1}')
-    public_key=$(echo "$key_pair" | awk '{print $2}')
+    key_pair=$("$xray_binary_path" x25519)
+    private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
+    public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
+
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        exit 1
+    fi
 
     vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$public_key")
     ss_inbound=$(build_ss_inbound "$ss_port" "$ss_password")
