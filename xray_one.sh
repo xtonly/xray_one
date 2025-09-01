@@ -2,11 +2,12 @@
 
 # ==============================================================================
 # Xray VLESS-Reality & Shadowsocks 2022 多功能管理脚本
-# 版本: Final v2.8 (Corrected)
+# 版本: Final v2.8 (Corrected v2)
 # 更新日志 (v2.8):
 # - [修复] 对 'check_xray_status' 函数进行加固，解决在服务初次启动后
 #   因时序问题调用 systemctl 或 xray version 可能导致脚本退出的间歇性BUG。
-# Correction: Standardized and fixed Reality key generation calls.
+# Correction 1: Standardized and fixed Reality key generation calls.
+# Correction 2: Forced key generation to use C locale for language compatibility.
 # ==============================================================================
 # v2.7: 根据用户建议，调整双协议安装模式下的提问顺序及整体排版
 # v2.6: 对所有交互式 'read' 命令进行加固，防止在 'set -e' 模式下因输入中断导致脚本意外退出
@@ -22,7 +23,7 @@
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="Final v2.8 (Corrected)"
+readonly SCRIPT_VERSION="Final v2.8 (Corrected v2)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -317,13 +318,12 @@ add_vless_to_ss() {
 
     info "正在生成 Reality 密钥对..."
     # --- FIX START ---
-    # The original command "$xray_binary_path" x25519 -i was incorrect.
-    # The correct command to generate a new keypair is just "$xray_binary_path" x25519.
-    # The parsing logic has also been standardized.
-    key_pair=$("$xray_binary_path" x25519)
+    # Added LC_ALL=C to force English output, ensuring compatibility
+    # with servers set to any language.
+    key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
+    # --- FIX END ---
     private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
     public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
-    # --- FIX END ---
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
         error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
@@ -674,14 +674,14 @@ run_install_vless() {
     local port="$1" uuid="$2" domain="$3"
     run_core_install || exit 1
     info "正在生成 Reality 密钥对..."
-    # --- FIX START ---
-    # Standardized the key generation command and output parsing.
-    # Removed incorrect awk logic (/PrivateKey:/ {print $2} and /Password:/)
     local key_pair private_key public_key vless_inbound
-    key_pair=$("$xray_binary_path" x25519)
+    # --- FIX START ---
+    # Added LC_ALL=C to force English output, ensuring compatibility
+    # with servers set to any language.
+    key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
+    # --- FIX END ---
     private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
     public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
-    # --- FIX END ---
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
         error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
@@ -710,13 +710,14 @@ run_install_dual() {
     local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
     run_core_install || exit 1
     info "正在生成 Reality 密钥对..."
-    # --- FIX START ---
-    # This block was already correct, but the fix ensures consistency with other functions.
     local key_pair private_key public_key vless_inbound ss_inbound
-    key_pair=$("$xray_binary_path" x25519)
+    # --- FIX START ---
+    # Added LC_ALL=C to force English output, ensuring compatibility
+    # with servers set to any language.
+    key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
+    # --- FIX END ---
     private_key=$(echo "$key_pair" | awk '/Private key:/ {print $3}')
     public_key=$(echo "$key_pair" | awk '/Public key:/ {print $3}')
-    # --- FIX END ---
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
         error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
