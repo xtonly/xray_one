@@ -189,7 +189,7 @@ draw_divider() {
 
 draw_menu_header() {
     clear
-    echo -e "${cyan} Xray VLESS-Reality & Shadowsocks-2022 管理脚本${none}"
+    echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
     draw_divider
     check_xray_status
