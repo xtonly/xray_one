@@ -104,7 +104,7 @@ generate_ss_key() {
 build_vless_inbound() {
     local port="$1" uuid="$2" domain="$3" private_key="$4" public_key="$5" shortid="20220701"
     jq -n --argjson port "$port" --arg uuid "$uuid" --arg domain "$domain" --arg private_key "$private_key" --arg public_key "$public_key" --arg shortid "$shortid" \
-    '{ "listen": "0.0.0.0", "port": $port, "protocol": "vless", "settings": {"clients": [{"id": $uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"show": false, "dest": ($domain + ":443"), "xver": 0, "serverNames": [$domain], "privateKey": $private_key, "publicKey": $public_key, "shortIds": [$shortid]}}, "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"]} }'
+    '{ "listen": "0.0.0.0", "port": $port, "protocol": "vless", "settings": {"clients": [{"id": $uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"show": false, "dest": ($domain + ":25443"), "xver": 0, "serverNames": [$domain], "privateKey": $private_key, "publicKey": $public_key, "shortIds": [$shortid]}}, "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"]} }'
 }
 
 build_ss_inbound() {
@@ -253,7 +253,7 @@ add_ss_to_vless() {
     local vless_inbound vless_port default_ss_port ss_port ss_password ss_inbound
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path")
     vless_port=$(echo "$vless_inbound" | jq -r '.port')
-    default_ss_port=$([[ "$vless_port" == "443" ]] && echo "25388" || echo "$((vless_port + 1))")
+    default_ss_port=$([[ "$vless_port" == "25443" ]] && echo "25388" || echo "$((vless_port + 1))")
     
     while true; do
         read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_ss_port}${none}): ")" ss_port || true
@@ -280,7 +280,7 @@ add_vless_to_ss() {
     local ss_inbound ss_port default_vless_port vless_port vless_uuid vless_domain key_pair private_key public_key vless_inbound
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     ss_port=$(echo "$ss_inbound" | jq -r '.port')
-    default_vless_port=$([[ "$ss_port" == "25388" ]] && echo "443" || echo "$((ss_port - 1))")
+    default_vless_port=$([[ "$ss_port" == "25388" ]] && echo "25443" || echo "$((ss_port - 1))")
     
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}${default_vless_port}${none}): ")" vless_port || true
@@ -326,8 +326,8 @@ install_vless_only() {
     info "开始配置 VLESS-Reality..."
     local port uuid domain
     while true; do
-        read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}443${none}): ")" port || true
-        [[ -z "$port" ]] && port=443
+        read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25443${none}): ")" port || true
+        [[ -z "$port" ]] && port=25443
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
     
@@ -369,12 +369,12 @@ install_dual() {
     local vless_port vless_uuid vless_domain ss_port ss_password
 
     while true; do
-        read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}443${none}): ")" vless_port || true
-        [[ -z "$vless_port" ]] && vless_port=443
+        read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25443${none}): ")" vless_port || true
+        [[ -z "$vless_port" ]] && vless_port=25443
         if is_valid_port "$vless_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
     
-    if [[ "$vless_port" == "443" ]]; then
+    if [[ "$vless_port" == "25443" ]]; then
         while true; do
             read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25388${none}): ")" ss_port || true
             [[ -z "$ss_port" ]] && ss_port=25388
@@ -589,7 +589,7 @@ view_all_info() {
             [[ "$is_quiet" = false ]] && error "VLESS配置不完整，可能已损坏。"
         else
             display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"
-            link_name_raw="$host X-reality"
+            link_name_raw="$host"
             link_name_encoded=$(echo "$link_name_raw" | sed 's/ /%20/g')
             vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=chrome&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"
             links_array+=("$vless_url")
@@ -619,7 +619,7 @@ view_all_info() {
         port=$(echo "$ss_inbound" | jq -r '.port')
         method=$(echo "$ss_inbound" | jq -r '.settings.method')
         password=$(echo "$ss_inbound" | jq -r '.settings.password')
-        link_name_raw="$host X-ss2022"
+        link_name_raw="$host -SS"
         user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
         ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
         links_array+=("$ss_url")
@@ -765,7 +765,7 @@ non_interactive_usage() {
     --quiet           静默模式, 成功后只输出订阅链接
 
   VLESS 选项:
-    --vless-port <p>  VLESS 端口 (默认: 443)
+    --vless-port <p>  VLESS 端口 (默认: 25443)
     --uuid <uuid>     UUID (默认: 随机生成)
     --sni <domain>    SNI 域名 (默认: learn.microsoft.com)
 
@@ -806,7 +806,7 @@ non_interactive_dispatcher() {
 
     case "$type" in
         vless)
-            [[ -z "$vless_port" ]] && vless_port=443
+            [[ -z "$vless_port" ]] && vless_port=25443
             [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
             [[ -z "$sni" ]] && sni="learn.microsoft.com"
             if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni"; then
@@ -825,12 +825,12 @@ non_interactive_dispatcher() {
             run_install_ss "$ss_port" "$ss_pass"
             ;;
         dual)
-            [[ -z "$vless_port" ]] && vless_port=443
+            [[ -z "$vless_port" ]] && vless_port=25443
             [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
             [[ -z "$sni" ]] && sni="learn.microsoft.com"
             [[ -z "$ss_pass" ]] && ss_pass=$(generate_ss_key)
             if [[ -z "$ss_port" ]]; then
-                if [[ "$vless_port" == "443" ]]; then ss_port=25388; else ss_port=$((vless_port + 1)); fi
+                if [[ "$vless_port" == "25443" ]]; then ss_port=25388; else ss_port=$((vless_port + 1)); fi
             fi
             if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni" || ! is_valid_port "$ss_port"; then
                 error "双协议参数无效。请检查端口或SNI域名。" && non_interactive_usage && exit 1
