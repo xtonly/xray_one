@@ -2,21 +2,21 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.3 (Robust Exit)
+# 版本: 2.4 (Final Compatibility)
 # ==============================================================================
 # 更新日志:
-# v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态, 解决二次进入无界面的问题.
-#       新增 "退出并删除脚本" 选项, 方便一键清理.
+# v2.4: 将自毁功能集成到退出选项(0),并增加确认步骤. 调整脚本严格模式以解决部分环境下直接退出的问题.
+# v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态. 新增 "退出并删除脚本" 选项.
 # v2.2: 修复 is_quiet 变量未定义Bug; 移除状态栏配置路径; 在主菜单显示更新日志.
 # v2.1: 修复版本号显示"未知"的Bug; 优化状态栏信息.
 # v2.0: 切换SS加密为aes-256-gcm以兼容特殊核心.
 # ==============================================================================
 
-# --- Shell 严格模式 ---
-set -euo pipefail
+# --- Shell 严格模式 (已放宽) ---
+set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.3 (Robust Exit)"
+readonly SCRIPT_VERSION="2.4 (Final Compatibility)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -114,6 +114,7 @@ check_xray_status() {
 
 # --- 核心配置生成函数 ---
 generate_ss_key() {
+    # 使用32字节(256位)密钥
     openssl rand -base64 32
 }
 
@@ -125,6 +126,7 @@ build_vless_inbound() {
 
 build_ss_inbound() {
     local port="$1" password="$2"
+    # 使用2022-blake3-aes-256-gcm加密方式
     jq -n --argjson port "$port" --arg password "$password" \
     '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-256-gcm", "password": $password} }'
 }
@@ -200,7 +202,7 @@ draw_menu_header() {
     clear
     echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
-    echo -e "${magenta} 更新日志: 修复Bug, 优化UI显示${none}"
+    echo -e "${magenta} 更新日志: 集成自毁功能, 优化兼容性${none}"
     draw_divider
     check_xray_status
     echo -e "${xray_status_info}"
@@ -414,7 +416,7 @@ install_dual() {
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true
         [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"
-        if is_valid_domain "$vless_domain"; then break; else error "域名格式无效，请重新输入。"; fi
+        if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi
     done
 
     run_install_dual "$vless_port" "$vless_uuid" "$vless_domain" "$ss_port" "$ss_password"
@@ -714,11 +716,10 @@ main_menu() {
         printf "  ${magenta}%-2s${none} %-35s\n" "6." "查看 Xray 日志"
         printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本"
-        printf "  ${red}%-2s${none} %-35s\n" "8." "退出并删除脚本"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本 (可选择删除脚本)"
         draw_divider
         
-        read -p " 请输入选项 [0-8]: " choice || true
+        read -p " 请输入选项 [0-7]: " choice || true
         
         local needs_pause=true
         
@@ -730,18 +731,22 @@ main_menu() {
             5) restart_xray ;;
             6) view_xray_log; needs_pause=false ;;
             7) view_all_info ;;
-            8) 
-                success "脚本将自动删除..."
-                # trap会处理后续的清理工作
-                rm -f "$0"
-                exit 0 
-                ;;
             0) 
-                success "感谢使用！"
-                exit 0 
+                read -p "$(echo -e "${yellow}您确定要退出吗? 是否同时删除脚本文件? [y/N/d(删除)]: ${none}")" confirm || true
+                if [[ "$confirm" =~ ^[dD]$ ]]; then
+                    success "感谢使用！脚本将自动删除..."
+                    rm -f "$0"
+                    exit 0
+                elif [[ "$confirm" =~ ^[yY]$ ]]; then
+                    success "感谢使用！"
+                    exit 0
+                else
+                    info "操作已取消。"
+                    needs_pause=false
+                fi
                 ;;
             *) 
-                error "无效选项。请输入0到8之间的数字。" 
+                error "无效选项。请输入0到7之间的数字。" 
                 ;;
         esac
         
