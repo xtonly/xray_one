@@ -2,9 +2,11 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.2 (Final UI/Bugfix)
+# 版本: 2.3 (Robust Exit)
 # ==============================================================================
 # 更新日志:
+# v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态, 解决二次进入无界面的问题.
+#       新增 "退出并删除脚本" 选项, 方便一键清理.
 # v2.2: 修复 is_quiet 变量未定义Bug; 移除状态栏配置路径; 在主菜单显示更新日志.
 # v2.1: 修复版本号显示"未知"的Bug; 优化状态栏信息.
 # v2.0: 切换SS加密为aes-256-gcm以兼容特殊核心.
@@ -14,7 +16,7 @@
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.2 (Final UI/Bugfix)"
+readonly SCRIPT_VERSION="2.3 (Robust Exit)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -26,6 +28,14 @@ readonly magenta='\e[95m' cyan='\e[96m' none='\e[0m'
 # --- 全局变量 ---
 xray_status_info=""
 
+# --- 退出清理函数 ---
+cleanup() {
+    echo -ne "${none}" # 重置终端颜色
+    tput cnorm # 确保光标可见
+    stty sane # 恢复终端到理智状态
+}
+trap cleanup EXIT
+
 # --- 辅助函数 ---
 error() { echo -e "\n$red[✖] $1$none\n" >&2; }
 info() { echo -e "\n$yellow[!] $1$none\n"; }
@@ -34,6 +44,7 @@ success() { echo -e "\n$green[✔] $1$none\n"; }
 spinner() {
     local pid="$1"
     local spinstr='|/-\'
+    tput civis # 隐藏光标
     while ps -p "$pid" > /dev/null; do
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
@@ -41,6 +52,7 @@ spinner() {
         sleep 0.1
         printf "\r"
     done
+    tput cnorm # 恢复光标
     printf "    \r"
 }
 
@@ -102,7 +114,6 @@ check_xray_status() {
 
 # --- 核心配置生成函数 ---
 generate_ss_key() {
-    # 使用32字节(256位)密钥
     openssl rand -base64 32
 }
 
@@ -114,7 +125,6 @@ build_vless_inbound() {
 
 build_ss_inbound() {
     local port="$1" password="$2"
-    # 使用2022-blake3-aes-256-gcm加密方式
     jq -n --argjson port "$port" --arg password "$password" \
     '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-256-gcm", "password": $password} }'
 }
@@ -705,9 +715,10 @@ main_menu() {
         printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
         draw_divider
         printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本"
+        printf "  ${red}%-2s${none} %-35s\n" "8." "退出并删除脚本"
         draw_divider
         
-        read -p " 请输入选项 [0-7]: " choice || true
+        read -p " 请输入选项 [0-8]: " choice || true
         
         local needs_pause=true
         
@@ -719,8 +730,19 @@ main_menu() {
             5) restart_xray ;;
             6) view_xray_log; needs_pause=false ;;
             7) view_all_info ;;
-            0) success "感谢使用！"; exit 0 ;;
-            *) error "无效选项。请输入0到7之间的数字。" ;;
+            8) 
+                success "脚本将自动删除..."
+                # trap会处理后续的清理工作
+                rm -f "$0"
+                exit 0 
+                ;;
+            0) 
+                success "感谢使用！"
+                exit 0 
+                ;;
+            *) 
+                error "无效选项。请输入0到8之间的数字。" 
+                ;;
         esac
         
         if [ "$needs_pause" = true ]; then
