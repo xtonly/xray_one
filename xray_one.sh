@@ -2,21 +2,19 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.1 (UI Fix)
+# 版本: 2.2 (Final UI/Bugfix)
 # ==============================================================================
-# 更新日志 (v2.1):
-# - 修复: 优化了版本号的获取逻辑, 修复了在某些情况下主菜单会显示"未知"的UI Bug.
-# - 优化: 在主菜单的状态栏增加了配置文件路径的显示, 使信息更全面.
-#
-# 更新日志 (v2.0):
-# - 终极尝试: 切换Shadowsocks-2022的加密算法为强度更高的 aes-256-gcm.
+# 更新日志:
+# v2.2: 修复 is_quiet 变量未定义Bug; 移除状态栏配置路径; 在主菜单显示更新日志.
+# v2.1: 修复版本号显示"未知"的Bug; 优化状态栏信息.
+# v2.0: 切换SS加密为aes-256-gcm以兼容特殊核心.
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.1 (UI Fix)"
+readonly SCRIPT_VERSION="2.2 (Final UI/Bugfix)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -98,14 +96,7 @@ check_xray_status() {
         service_status="${yellow}未运行${none}"
     fi
     
-    local config_status
-    if [[ -f "$xray_config_path" ]]; then
-        config_status=" | 配置: ${cyan}${xray_config_path}${none}"
-    else
-        config_status=""
-    fi
-
-    xray_status_info=" Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}${config_status}"
+    xray_status_info=" Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}"
 }
 
 
@@ -199,6 +190,7 @@ draw_menu_header() {
     clear
     echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
+    echo -e "${magenta} 更新日志: 修复Bug, 优化UI显示${none}"
     draw_divider
     check_xray_status
     echo -e "${xray_status_info}"
@@ -574,12 +566,12 @@ view_all_info() {
         return
     fi
     
-    [[ "$is_quiet" = false ]] && clear && echo -e "${cyan} Xray 配置及订阅信息${none}" && draw_divider
+    clear && echo -e "${cyan} Xray 配置及订阅信息${none}" && draw_divider
 
     local ip
     ip=$(get_public_ip)
     if [[ -z "$ip" ]]; then
-        [[ "$is_quiet" = false ]] && error "无法获取公网 IP 地址。"
+        error "无法获取公网 IP 地址。"
         return 1
     fi
     local host
@@ -602,12 +594,10 @@ view_all_info() {
         vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=chrome&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"
         links_array+=("$vless_url")
 
-        if [[ "$is_quiet" = false ]]; then
-            echo -e "${green} [ VLESS-Reality 配置 ]${none}"
-            printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-            printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-            printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"
-        fi
+        echo -e "${green} [ VLESS-Reality 配置 ]${none}"
+        printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
+        printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
+        printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"
     fi
 
     local ss_inbound
@@ -622,31 +612,25 @@ view_all_info() {
         ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
         links_array+=("$ss_url")
         
-        if [[ "$is_quiet" = false ]]; then
-            echo ""
-            echo -e "${green} [ Shadowsocks-2022 配置 ]${none}"
-            printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-            printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-            printf "    %s: ${cyan}%s${none}\n" "加密方式" "$method"
-            printf "    %s: ${cyan}%s${none}\n" "密码" "$password"
-        fi
+        echo ""
+        echo -e "${green} [ Shadowsocks-2022 配置 ]${none}"
+        printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
+        printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
+        printf "    %s: ${cyan}%s${none}\n" "加密方式" "$method"
+        printf "    %s: ${cyan}%s${none}\n" "密码" "$password"
     fi
 
     if [ ${#links_array[@]} -gt 0 ]; then
-        if [[ "$is_quiet" = true ]]; then
-            printf "%s\n" "${links_array[@]}"
-        else
-            draw_divider
-            printf "%s\n" "${links_array[@]}" > ~/xray_subscription_info.txt
-            success "所有订阅链接已汇总保存到: ~/xray_subscription_info.txt"
-            
-            echo -e "\n${yellow} --- V2Ray / Clash 等客户端可直接导入以下链接 --- ${none}\n"
-            for link in "${links_array[@]}"; do
-                echo -e "${cyan}${link}${none}\n"
-            done
-            draw_divider
-        fi
-    elif [[ "$is_quiet" = false ]]; then
+        draw_divider
+        printf "%s\n" "${links_array[@]}" > ~/xray_subscription_info.txt
+        success "所有订阅链接已汇总保存到: ~/xray_subscription_info.txt"
+        
+        echo -e "\n${yellow} --- V2Ray / Clash 等客户端可直接导入以下链接 --- ${none}\n"
+        for link in "${links_array[@]}"; do
+            echo -e "${cyan}${link}${none}\n"
+        done
+        draw_divider
+    else
         info "当前未安装任何协议，无订阅信息可显示。"
     fi
 }
@@ -745,21 +729,9 @@ main_menu() {
     done
 }
 
-# --- 非交互式安装逻辑 ---
-non_interactive_usage() {
-    cat << EOF
-非交互式安装用法: ./$(basename "$0") install [选项...]
-EOF
-}
-
-non_interactive_dispatcher() {
-    main_menu
-}
-
-# --- 脚本主入口 ---
 main() {
     pre_check
-    non_interactive_dispatcher "$@"
+    main_menu
 }
 
 main "$@"
