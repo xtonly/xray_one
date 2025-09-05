@@ -1,3 +1,22 @@
+echo "--- 开始执行终极修复流程 ---" && \
+sudo systemctl stop xray && \
+sudo systemctl disable xray && \
+echo "正在强制删除旧文件..." && \
+sudo rm -f /usr/local/bin/xray && \
+sudo rm -rf /usr/local/etc/xray && \
+sudo rm -f /etc/systemd/system/xray.service && \
+sudo systemctl daemon-reload && \
+echo "旧文件已彻底清理。" && \
+echo "" && \
+echo "--- 正在安装官方最新版 Xray ---" && \
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install && \
+echo "" && \
+echo "--- 官方 Xray 安装完毕 ---" && \
+echo "重要：请检查下面的版本号，它不应再是 25.9.5" && \
+/usr/local/bin/xray version && \
+echo "" && \
+echo "--- 正在下载与官方核心兼容的 v1.0.5 脚本 ---" && \
+cat << 'EOF' > xray_one.sh
 #!/bin/bash
 
 # ==============================================================================
@@ -643,7 +662,6 @@ view_all_info() {
 # --- 核心安装逻辑函数 ---
 run_install_vless() {
     local port="$1" uuid="$2" domain="$3"
-    # run_core_install || exit 1 # No need to run install again if menu is used
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound
     key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
@@ -664,7 +682,6 @@ run_install_vless() {
 
 run_install_ss() {
     local port="$1" password="$2"
-    # run_core_install || exit 1 # No need to run install again if menu is used
     local ss_inbound
     ss_inbound=$(build_ss_inbound "$port" "$password")
     write_config "[$ss_inbound]"
@@ -675,7 +692,6 @@ run_install_ss() {
 
 run_install_dual() {
     local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
-    # run_core_install || exit 1 # No need to run install again if menu is used
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound ss_inbound
     key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
@@ -751,3 +767,9 @@ main() {
 }
 
 main "$@"
+EOF
+chmod +x xray_one.sh && \
+echo "" && \
+echo "--- 修复完成！---" && \
+echo "脚本 xray_one.sh 已更新为兼容官方核心的 v1.0.5 版本。" && \
+echo "请立即运行 'bash xray_one.sh' 并选择 '1. 安装/重装 Xray 配置' 来完成最后一步。"
