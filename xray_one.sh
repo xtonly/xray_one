@@ -2,13 +2,14 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.8 (Final)
+# 版本: 2.9 (Final)
 # ==============================================================================
 # 更新日志:
+# v2.9: 修复了双协议安装模式下SNI域名验证错误的Bug.
 # v2.8: 移除所有退出时删除脚本的逻辑, 选项0现在为直接退出.
 # v2.7: 根据用户反馈, 彻底移除退出时删除脚本的功能, 简化退出流程.
-# v2.6: 增加退出自毁时的安全检查, 兼容管道等特殊执行方式, 避免删除/dev/fd/..而报错.
-# v2.5: 简化退出逻辑, 回车或Y默认删除脚本, N不删除.
+# v2.6: 增加退出自毁时的安全检查, 兼容管道等特殊执行方式.
+# v2.5: 简化退出逻辑, 回车或Y默认删除脚本.
 # v2.4: 调整脚本严格模式以解决部分环境下直接退出的问题.
 # v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态.
 # v2.2: 修复UI Bug并优化主菜单显示.
@@ -20,7 +21,7 @@
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.8 (Final)"
+readonly SCRIPT_VERSION="2.9 (Final)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -206,7 +207,7 @@ draw_menu_header() {
     clear
     echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
-    echo -e "${magenta} 更新日志: 最终版, 祝您使用愉快!${none}"
+    echo -e "${magenta} 更新日志: 修复域名验证Bug, 最终版${none}"
     draw_divider
     check_xray_status
     echo -e "${xray_status_info}"
@@ -420,7 +421,7 @@ install_dual() {
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true
         [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"
-        if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi
+        if is_valid_domain "$vless_domain"; then break; else error "域名格式无效，请重新输入。"; fi
     done
 
     run_install_dual "$vless_port" "$vless_uuid" "$vless_domain" "$ss_port" "$ss_password"
