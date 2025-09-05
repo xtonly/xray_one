@@ -2,9 +2,10 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.7 (Final)
+# 版本: 2.8 (Final)
 # ==============================================================================
 # 更新日志:
+# v2.8: 移除所有退出时删除脚本的逻辑, 选项0现在为直接退出.
 # v2.7: 根据用户反馈, 彻底移除退出时删除脚本的功能, 简化退出流程.
 # v2.6: 增加退出自毁时的安全检查, 兼容管道等特殊执行方式, 避免删除/dev/fd/..而报错.
 # v2.5: 简化退出逻辑, 回车或Y默认删除脚本, N不删除.
@@ -19,7 +20,7 @@
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.7 (Final)"
+readonly SCRIPT_VERSION="2.8 (Final)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -205,7 +206,7 @@ draw_menu_header() {
     clear
     echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
-    echo -e "${magenta} 更新日志: 移除自毁功能, 最终版本${none}"
+    echo -e "${magenta} 更新日志: 最终版, 祝您使用愉快!${none}"
     draw_divider
     check_xray_status
     echo -e "${xray_status_info}"
@@ -735,22 +736,8 @@ main_menu() {
             6) view_xray_log; needs_pause=false ;;
             7) view_all_info ;;
             0) 
-                read -p "$(echo -e "${yellow}退出并删除脚本? (默认: 是) [Y/n]: ${none}")" confirm || true
-                if [[ "$confirm" =~ ^[nN]$ ]]; then
-                    success "感谢使用！脚本已保留。"
-                    exit 0
-                else
-                    # 检查脚本的调用路径, 防止删除 file descriptor
-                    if [[ "$0" =~ /dev/fd/ ]]; then
-                        error "无法自动删除脚本, 因为它是通过管道执行的。"
-                        info "脚本已退出, 请手动清理。"
-                        exit 1
-                    else
-                        success "感谢使用！脚本将自动删除..."
-                        rm -f "$0"
-                        exit 0
-                    fi
-                fi
+                success "感谢使用！"
+                exit 0
                 ;;
             *) 
                 error "无效选项。请输入0到7之间的数字。" 
