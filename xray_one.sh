@@ -2,20 +2,19 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 一键生成 VLESS-Reality & Shadowsocks 2022 节点
-# 版本: 1.0.8 (yahuisme xray-dual 2.8 衍生版)
+# 版本: 1.0.5 (yahuisme xray-dual 2.8 衍生版)
+# 兼容官方最新版 Xray-core
 # ==============================================================================
-# 更新日志 (v1.0.8):
-# - 终极修复: 移除SS-2022的随机密钥生成功能, 改为强制用户手动输入密码.
-#             经测试网络路径通畅, 证明问题出在特殊Xray核心对随机Base64密钥的兼容性上.
-#             使用常规密码将强制启用标准KDF流程, 最大化兼容性.
+# 更新日志 (v1.0.5):
+# 兼容性修复: 为 Shadowsocks-2022 的密码添加 "base64:" 前缀,
+#             以兼容 Xray-core v1.8.0+ 版本的密钥处理机制.
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="1.0.8 (Manual SS Password)"
+readonly SCRIPT_VERSION="1.0.5 (Official Core Compatible)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -101,6 +100,10 @@ check_xray_status() {
 
 
 # --- 核心配置生成函数 ---
+generate_ss_key() {
+    openssl rand -base64 16
+}
+
 build_vless_inbound() {
     local port="$1" uuid="$2" domain="$3" private_key="$4" public_key="$5" shortid="20220701"
     jq -n --argjson port "$port" --arg uuid "$uuid" --arg domain "$domain" --arg private_key "$private_key" --arg public_key "$public_key" --arg shortid "$shortid" \
@@ -110,7 +113,7 @@ build_vless_inbound() {
 build_ss_inbound() {
     local port="$1" password="$2"
     jq -n --argjson port "$port" --arg password "$password" \
-    '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-128-gcm", "password": $password} }'
+    '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-128-gcm", "password": ("base64:" + $password)} }'
 }
 
 write_config() {
@@ -250,7 +253,7 @@ clean_install_menu() {
 
 add_ss_to_vless() {
     info "开始追加安装 Shadowsocks-2022..."
-    local vless_inbound vless_port default_ss_port ss_port ss_password="" ss_inbound
+    local vless_inbound vless_port default_ss_port ss_port ss_password ss_inbound
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path")
     vless_port=$(echo "$vless_inbound" | jq -r '.port')
     default_ss_port=$([[ "$vless_port" == "25433" ]] && echo "25338" || echo "$((vless_port + 1))")
@@ -262,10 +265,11 @@ add_ss_to_vless() {
     done
     info "Shadowsocks 端口将使用: ${cyan}${ss_port}${none}"
     
-    while [[ -z "$ss_password" ]]; do
-      read -p "$(echo -e " -> ${yellow}请输入您的 Shadowsocks 密码 (不要留空):${none} ")" ss_password || true
-    done
-    info "Shadowsocks 密码已设置为: ${cyan}${ss_password}${none}"
+    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" ss_password || true
+    if [[ -z "$ss_password" ]]; then
+        ss_password=$(generate_ss_key)
+        info "已为您生成随机密钥: ${cyan}${ss_password}${none}"
+    fi
     
     ss_inbound=$(build_ss_inbound "$ss_port" "$ss_password")
     write_config "[$vless_inbound, $ss_inbound]"
@@ -344,24 +348,25 @@ install_vless_only() {
 
 install_ss_only() {
     info "开始配置 Shadowsocks-2022..."
-    local port password=""
+    local port password
     while true; do
         read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" port || true
         [[ -z "$port" ]] && port=25338
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
 
-    while [[ -z "$password" ]]; do
-      read -p "$(echo -e " -> ${yellow}请输入您的 Shadowsocks 密码 (不要留空):${none} ")" password || true
-    done
-    info "Shadowsocks 密码已设置为: ${cyan}${password}${none}"
+    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" password || true
+    if [[ -z "$password" ]]; then
+        password=$(generate_ss_key)
+        info "已为您生成随机密钥: ${cyan}${password}${none}"
+    fi
     
     run_install_ss "$port" "$password"
 }
 
 install_dual() {
     info "开始配置双协议 (VLESS-Reality + Shadowsocks-2022)..."
-    local vless_port vless_uuid vless_domain ss_port ss_password=""
+    local vless_port vless_uuid vless_domain ss_port ss_password
 
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" vless_port || true
@@ -386,11 +391,12 @@ install_dual() {
         info "已为您生成随机UUID: ${cyan}${vless_uuid}${none}"
     fi
 
-    while [[ -z "$ss_password" ]]; do
-      read -p "$(echo -e " -> ${yellow}请输入您的 Shadowsocks 密码 (不要留空):${none} ")" ss_password || true
-    done
-    info "Shadowsocks 密码已设置为: ${cyan}${ss_password}${none}"
-    
+    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" ss_password || true
+    if [[ -z "$ss_password" ]]; then
+        ss_password=$(generate_ss_key)
+        info "已为您生成随机密钥: ${cyan}${ss_password}${none}"
+    fi
+
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true
         [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"
@@ -503,10 +509,10 @@ modify_vless_config() {
 
 modify_ss_config() {
     info "开始修改 Shadowsocks-2022 配置..."
-    local ss_inbound current_port current_password port password="" new_ss_inbound vless_inbound new_inbounds
+    local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     current_port=$(echo "$ss_inbound" | jq -r '.port')
-    current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
+    current_password=$(echo "$ss_inbound" | jq -r '.settings.password' | sed 's/^base64://') # Remove prefix for display
     
     while true; do
         read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
@@ -514,9 +520,8 @@ modify_ss_config() {
         if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
     done
 
-    while [[ -z "$password" ]]; do
-      read -p "$(echo -e " -> ${yellow}请输入新的 Shadowsocks 密码 (当前: ${cyan}${current_password}${none}, 不要留空):${none} ")" password || true
-    done
+    read -p "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")" password || true
+    [[ -z "$password" ]] && password=$current_password
     
     new_ss_inbound=$(build_ss_inbound "$port" "$password")
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
@@ -549,28 +554,6 @@ view_xray_log() {
     if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
     info "正在显示 Xray 实时日志... 按 Ctrl+C 退出。"
     journalctl -u xray -f --no-pager
-}
-
-post_install_check() {
-    local used_ports
-    used_ports=$(jq -r '.inbounds[].port' "$xray_config_path" | tr '\n' ' ')
-    
-    if [[ "$is_quiet" = false ]]; then
-        draw_divider
-        echo -e "${yellow}--- [ 环境检查向导 ] ---${none}"
-        echo -e "安装已完成, 但要使其可用, 您必须确保端口 ${cyan}${used_ports}${none}未被防火墙拦截."
-        echo ""
-        echo -e "1. ${magenta}检查本地防火墙 (UFW):${none}"
-        echo -e "   请运行: ${cyan}sudo ufw status${none}"
-        echo -e "   - 如果状态是 ${yellow}inactive${none}, 本地防火墙是关闭的, 请直接进行第2步."
-        echo -e "   - 如果状态是 ${green}active${none}, 请确保列表中有针对端口 ${cyan}${used_ports}${none}的 ALLOW 规则."
-        echo ""
-        echo -e "2. ${magenta}检查云服务商防火墙 (安全组):${none}"
-        echo -e "   ${red}这是最常见的问题!${none} 您必须登录云服务商(如GCP, AWS, Oracle)网站, "
-        echo -e "   找到您服务器的 ${yellow}网络安全组(Security Group)${none} 设置, "
-        echo -e "   并添加入站规则(Inbound Rule)以放行TCP端口: ${cyan}${used_ports}${none}."
-        draw_divider
-    fi
 }
 
 view_all_info() {
@@ -622,7 +605,7 @@ view_all_info() {
         local port method password link_name_raw user_info_base64 ss_url
         port=$(echo "$ss_inbound" | jq -r '.port')
         method=$(echo "$ss_inbound" | jq -r '.settings.method')
-        password=$(echo "$ss_inbound" | jq -r '.settings.password')
+        password=$(echo "$ss_inbound" | jq -r '.settings.password' | sed 's/^base64://') # Remove prefix for sharing link
         link_name_raw="$host-SS"
         user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
         ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
@@ -649,8 +632,7 @@ view_all_info() {
             for link in "${links_array[@]}"; do
                 echo -e "${cyan}${link}${none}\n"
             done
-            
-            post_install_check
+            draw_divider
         fi
     elif [[ "$is_quiet" = false ]]; then
         info "当前未安装任何协议，无订阅信息可显示。"
@@ -661,7 +643,7 @@ view_all_info() {
 # --- 核心安装逻辑函数 ---
 run_install_vless() {
     local port="$1" uuid="$2" domain="$3"
-    run_core_install || exit 1
+    # run_core_install || exit 1 # No need to run install again if menu is used
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound
     key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
@@ -682,7 +664,7 @@ run_install_vless() {
 
 run_install_ss() {
     local port="$1" password="$2"
-    run_core_install || exit 1
+    # run_core_install || exit 1 # No need to run install again if menu is used
     local ss_inbound
     ss_inbound=$(build_ss_inbound "$port" "$password")
     write_config "[$ss_inbound]"
@@ -693,7 +675,7 @@ run_install_ss() {
 
 run_install_dual() {
     local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
-    run_core_install || exit 1
+    # run_core_install || exit 1 # No need to run install again if menu is used
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key vless_inbound ss_inbound
     key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
@@ -717,8 +699,8 @@ run_install_dual() {
 main_menu() {
     while true; do
         draw_menu_header
-        printf "  ${green}%-2s${none} %-35s\n" "1." "安装 Xray (VLESS/Shadowsocks)"
-        printf "  ${cyan}%-2s${none} %-35s\n" "2." "更新 Xray"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "安装/重装 Xray 配置"
+        printf "  ${cyan}%-2s${none} %-35s\n" "2." "更新 Xray 核心"
         printf "  ${red}%-2s${none} %-35s\n" "3." "卸载 Xray"
         draw_divider
         printf "  ${yellow}%-2s${none} %-35s\n" "4." "修改配置"
@@ -734,8 +716,8 @@ main_menu() {
         local needs_pause=true
         
         case "$choice" in
-            1) install_menu ;;
-            2) update_xray ;;
+            1) clean_install_menu ;;
+            2) run_core_install; restart_xray ;;
             3) uninstall_xray ;;
             4) modify_config_menu ;;
             5) restart_xray ;;
@@ -754,92 +736,12 @@ main_menu() {
 # --- 非交互式安装逻辑 ---
 non_interactive_usage() {
     cat << EOF
-
-非交互式安装用法:
-  ./$(basename "$0") install --type <vless|ss|dual> [选项...]
-
-  通用选项:
-    --type <type>     安装类型 (必须: vless, ss, dual)
-    --quiet           静默模式, 成功后只输出订阅链接
-
-  VLESS 选项:
-    --vless-port <p>  VLESS 端口 (默认: 25433)
-    --uuid <uuid>     UUID (默认: 随机生成)
-    --sni <domain>    SNI 域名 (默认: www.icloud.com)
-
-  Shadowsocks 选项:
-    --ss-port <p>     Shadowsocks 端口 (默认: 25338)
-    --ss-pass <pass>  Shadowsocks 密码 (必须)
-
-  示例:
-    # 安装 VLESS (使用默认值)
-    ./$(basename "$0") install --type vless
-
-    # 安静地安装双协议并指定 VLESS 端口和 UUID，并将链接保存到文件
-    ./$(basename "$0") install --type dual --vless-port 2053 --uuid 'your-uuid-here' --ss-pass 'MySecretPass' --quiet > links.txt
+非交互式安装用法: ./$(basename "$0") install [选项...]
 EOF
 }
 
 non_interactive_dispatcher() {
-    if [[ $# -eq 0 || "$1" != "install" ]]; then
-        main_menu
-        return
-    fi
-    shift
-
-    local type="" vless_port="" uuid="" sni="" ss_port="" ss_pass=""
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --type) type="$2"; shift 2 ;;
-            --vless-port) vless_port="$2"; shift 2 ;;
-            --uuid) uuid="$2"; shift 2 ;;
-            --sni) sni="$2"; shift 2 ;;
-            --ss-port) ss_port="$2"; shift 2 ;;
-            --ss-pass) ss_pass="$2"; shift 2 ;;
-            --quiet) is_quiet=true; shift ;;
-            *) error "未知参数: $1"; non_interactive_usage; exit 1 ;;
-        esac
-    done
-
-    case "$type" in
-        vless)
-            [[ -z "$vless_port" ]] && vless_port=25433
-            [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
-            [[ -z "$sni" ]] && sni="www.icloud.com"
-            if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni"; then
-                error "VLESS 参数无效。请检查端口或SNI域名。" && non_interactive_usage && exit 1
-            fi
-            info "开始非交互式安装 VLESS..."
-            run_install_vless "$vless_port" "$uuid" "$sni"
-            ;;
-        ss)
-            [[ -z "$ss_port" ]] && ss_port=25338
-            if [[ -z "$ss_pass" ]]; then error "使用 --type ss 时, 必须提供 --ss-pass 参数。" && non_interactive_usage && exit 1; fi
-            if ! is_valid_port "$ss_port"; then error "Shadowsocks 参数无效。请检查端口。" && non_interactive_usage && exit 1; fi
-            info "开始非交互式安装 Shadowsocks..."
-            run_install_ss "$ss_port" "$ss_pass"
-            ;;
-        dual)
-            [[ -z "$vless_port" ]] && vless_port=25433
-            [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
-            [[ -z "$sni" ]] && sni="www.icloud.com"
-            if [[ -z "$ss_pass" ]]; then error "使用 --type dual 时, 必须提供 --ss-pass 参数。" && non_interactive_usage && exit 1; fi
-            if [[ -z "$ss_port" ]]; then
-                if [[ "$vless_port" == "25433" ]]; then ss_port=25338; else ss_port=$((vless_port + 1)); fi
-            fi
-            if ! is_valid_port "$vless_port" || ! is_valid_domain "$sni" || ! is_valid_port "$ss_port"; then
-                error "双协议参数无效。请检查端口或SNI域名。" && non_interactive_usage && exit 1
-            fi
-            info "开始非交互式安装双协议..."
-            run_install_dual "$vless_port" "$uuid" "$sni" "$ss_port" "$ss_pass"
-            ;;
-        *)
-            error "必须通过 --type 指定安装类型 (vless|ss|dual)"
-            non_interactive_usage
-            exit 1
-            ;;
-    esac
+    main_menu
 }
 
 # --- 脚本主入口 ---
