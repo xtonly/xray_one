@@ -2,21 +2,22 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.4 (Final Compatibility)
+# 版本: 2.5 (Final)
 # ==============================================================================
 # 更新日志:
-# v2.4: 将自毁功能集成到退出选项(0),并增加确认步骤. 调整脚本严格模式以解决部分环境下直接退出的问题.
-# v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态. 新增 "退出并删除脚本" 选项.
+# v2.5: 简化退出逻辑, 回车或Y默认删除脚本, N不删除.
+# v2.4: 集成自毁功能到退出选项(0),并增加确认步骤. 调整脚本严格模式以解决部分环境下直接退出的问题.
+# v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态.
 # v2.2: 修复 is_quiet 变量未定义Bug; 移除状态栏配置路径; 在主菜单显示更新日志.
 # v2.1: 修复版本号显示"未知"的Bug; 优化状态栏信息.
 # v2.0: 切换SS加密为aes-256-gcm以兼容特殊核心.
 # ==============================================================================
 
-# --- Shell 严格模式 (已放宽) ---
+# --- Shell 兼容模式 ---
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.4 (Final Compatibility)"
+readonly SCRIPT_VERSION="2.5 (Final)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -202,7 +203,7 @@ draw_menu_header() {
     clear
     echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
-    echo -e "${magenta} 更新日志: 集成自毁功能, 优化兼容性${none}"
+    echo -e "${magenta} 更新日志: 简化退出逻辑, 优化兼容性${none}"
     draw_divider
     check_xray_status
     echo -e "${xray_status_info}"
@@ -716,7 +717,7 @@ main_menu() {
         printf "  ${magenta}%-2s${none} %-35s\n" "6." "查看 Xray 日志"
         printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本 (可选择删除脚本)"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出 (默认删除脚本)"
         draw_divider
         
         read -p " 请输入选项 [0-7]: " choice || true
@@ -732,17 +733,14 @@ main_menu() {
             6) view_xray_log; needs_pause=false ;;
             7) view_all_info ;;
             0) 
-                read -p "$(echo -e "${yellow}您确定要退出吗? 是否同时删除脚本文件? [y/N/d(删除)]: ${none}")" confirm || true
-                if [[ "$confirm" =~ ^[dD]$ ]]; then
+                read -p "$(echo -e "${yellow}退出并删除脚本? (默认: 是) [Y/n]: ${none}")" confirm || true
+                if [[ "$confirm" =~ ^[nN]$ ]]; then
+                    success "感谢使用！脚本已保留。"
+                    exit 0
+                else
                     success "感谢使用！脚本将自动删除..."
                     rm -f "$0"
                     exit 0
-                elif [[ "$confirm" =~ ^[yY]$ ]]; then
-                    success "感谢使用！"
-                    exit 0
-                else
-                    info "操作已取消。"
-                    needs_pause=false
                 fi
                 ;;
             *) 
