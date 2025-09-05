@@ -3,11 +3,15 @@
 # ==============================================================================
 # Xray_One 多功能管理脚本
 # 一键生成 VLESS-Reality & Shadowsocks 2022 节点
-# 版本: 1.0.5 (yahuisme xray-dual 2.8 衍生版)
+# 版本: 1.0.6 (yahuisme xray-dual 2.8 衍生版)
 # ==============================================================================
+# 更新日志 (v1.0.6):
+# 兼容性回滚: 移除 v1.0.5 中为 SS2022 密码添加的 "base64:" 前缀.
+#             日志显示用户使用的Xray核心版本不支持该前缀, 需要原始的Base64字符串.
+#
 # 更新日志 (v1.0.5):
 # 兼容性修复: 为 Shadowsocks-2022 的密码添加 "base64:" 前缀,
-#             以兼容 Xray-core v1.8.0+ 版本的密钥处理机制, 解决新版核心无法连接的问题.
+#             以兼容 Xray-core v1.8.0+ 版本的密钥处理机制.
 #
 # 更新日志 (v1.0.4):
 # Correction 1: Standardized and fixed Reality key generation calls.
@@ -20,7 +24,7 @@
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="1.0.5 (SS2022 Fix)"
+readonly SCRIPT_VERSION="1.0.6 (Revert SS2022 Fix for compatibility)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -119,7 +123,7 @@ build_vless_inbound() {
 build_ss_inbound() {
     local port="$1" password="$2"
     jq -n --argjson port "$port" --arg password "$password" \
-    '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-128-gcm", "password": ("base64:" + $password)} }'
+    '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-128-gcm", "password": $password} }'
 }
 
 write_config() {
@@ -526,7 +530,7 @@ modify_ss_config() {
     local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     current_port=$(echo "$ss_inbound" | jq -r '.port')
-    current_password=$(echo "$ss_inbound" | jq -r '.settings.password' | sed 's/^base64://') # Remove prefix for display
+    current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
     
     while true; do
         read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
@@ -632,7 +636,7 @@ view_all_info() {
         local port method password link_name_raw user_info_base64 ss_url
         port=$(echo "$ss_inbound" | jq -r '.port')
         method=$(echo "$ss_inbound" | jq -r '.settings.method')
-        password=$(echo "$ss_inbound" | jq -r '.settings.password' | sed 's/^base64://') # Remove prefix for sharing link
+        password=$(echo "$ss_inbound" | jq -r '.settings.password')
         link_name_raw="$host-SS"
         user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
         ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
