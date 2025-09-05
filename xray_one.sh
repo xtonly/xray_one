@@ -2,19 +2,21 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.0 (Final Attempt for non-standard core)
+# 版本: 2.1 (UI Fix)
 # ==============================================================================
+# 更新日志 (v2.1):
+# - 修复: 优化了版本号的获取逻辑, 修复了在某些情况下主菜单会显示"未知"的UI Bug.
+# - 优化: 在主菜单的状态栏增加了配置文件路径的显示, 使信息更全面.
+#
 # 更新日志 (v2.0):
-# - 终极尝试: 切换Shadowsocks-2022的加密算法为强度更高的 aes-256-gcm,
-#             并将密钥长度从16字节(128位)提升至32字节(256位).
-#             这是针对无法连接的非标Xray核心的最后配置层面的解决方案.
+# - 终极尝试: 切换Shadowsocks-2022的加密算法为强度更高的 aes-256-gcm.
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.0 (SS2022-256bit)"
+readonly SCRIPT_VERSION="2.1 (UI Fix)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -25,20 +27,15 @@ readonly magenta='\e[95m' cyan='\e[96m' none='\e[0m'
 
 # --- 全局变量 ---
 xray_status_info=""
-is_quiet=false
 
 # --- 辅助函数 ---
 error() { echo -e "\n$red[✖] $1$none\n" >&2; }
-info() { [[ "$is_quiet" = false ]] && echo -e "\n$yellow[!] $1$none\n"; }
-success() { [[ "$is_quiet" = false ]] && echo -e "\n$green[✔] $1$none\n"; }
+info() { echo -e "\n$yellow[!] $1$none\n"; }
+success() { echo -e "\n$green[✔] $1$none\n"; }
 
 spinner() {
     local pid="$1"
     local spinstr='|/-\'
-    if [[ "$is_quiet" = true ]]; then
-        wait "$pid"
-        return
-    fi
     while ps -p "$pid" > /dev/null; do
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
@@ -86,7 +83,13 @@ check_xray_status() {
     fi
 
     local xray_version
-    xray_version=$("$xray_binary_path" version 2>/dev/null | head -n 1 | awk '{print $2}' || echo "未知")
+    local version_line
+    version_line=$("$xray_binary_path" version 2>/dev/null | head -n 1)
+    if [[ -n "$version_line" ]]; then
+        xray_version=$(echo "$version_line" | awk '{print $2}')
+    else
+        xray_version="未知"
+    fi
     
     local service_status
     if systemctl is-active --quiet xray 2>/dev/null; then
@@ -95,7 +98,14 @@ check_xray_status() {
         service_status="${yellow}未运行${none}"
     fi
     
-    xray_status_info=" Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}"
+    local config_status
+    if [[ -f "$xray_config_path" ]]; then
+        config_status=" | 配置: ${cyan}${xray_config_path}${none}"
+    else
+        config_status=""
+    fi
+
+    xray_status_info=" Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}${config_status}"
 }
 
 
@@ -168,8 +178,6 @@ run_core_install() {
 }
 
 
-# --- 菜单功能及安装逻辑 (省略未修改部分) ---
-# ... (此处省略大量未修改的菜单函数，与上一版相同) ...
 # --- 输入验证函数 ---
 is_valid_port() {
     local port="$1"
@@ -183,7 +191,7 @@ is_valid_domain() {
 
 # --- 菜单功能函数 ---
 draw_divider() {
-    printf "%0.s─" {1..48}
+    printf "%0.s─" {1..80}
     printf "\n"
 }
 
@@ -562,7 +570,6 @@ view_xray_log() {
 
 view_all_info() {
     if [ ! -f "$xray_config_path" ]; then
-        [[ "$is_quiet" = true ]] && return
         error "错误: 配置文件不存在。"
         return
     fi
