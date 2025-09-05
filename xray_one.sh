@@ -2,15 +2,16 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: 2.6 (Final)
+# 版本: 2.7 (Final)
 # ==============================================================================
 # 更新日志:
+# v2.7: 根据用户反馈, 彻底移除退出时删除脚本的功能, 简化退出流程.
 # v2.6: 增加退出自毁时的安全检查, 兼容管道等特殊执行方式, 避免删除/dev/fd/..而报错.
 # v2.5: 简化退出逻辑, 回车或Y默认删除脚本, N不删除.
-# v2.4: 集成自毁功能到退出选项(0),并增加确认步骤. 调整脚本严格模式以解决部分环境下直接退出的问题.
+# v2.4: 调整脚本严格模式以解决部分环境下直接退出的问题.
 # v2.3: 新增 trap 退出清理功能, 确保任何情况下退出都能恢复终端状态.
-# v2.2: 修复 is_quiet 变量未定义Bug; 移除状态栏配置路径; 在主菜单显示更新日志.
-# v2.1: 修复版本号显示"未知"的Bug; 优化状态栏信息.
+# v2.2: 修复UI Bug并优化主菜单显示.
+# v2.1: 修复版本号显示"未知"的Bug.
 # v2.0: 切换SS加密为aes-256-gcm以兼容特殊核心.
 # ==============================================================================
 
@@ -18,7 +19,7 @@
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="2.6 (Final)"
+readonly SCRIPT_VERSION="2.7 (Final)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -204,7 +205,7 @@ draw_menu_header() {
     clear
     echo -e "${cyan} Xray_One 管理脚本${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
-    echo -e "${magenta} 更新日志: 优化退出逻辑, 提升兼容性${none}"
+    echo -e "${magenta} 更新日志: 移除自毁功能, 最终版本${none}"
     draw_divider
     check_xray_status
     echo -e "${xray_status_info}"
@@ -718,7 +719,7 @@ main_menu() {
         printf "  ${magenta}%-2s${none} %-35s\n" "6." "查看 Xray 日志"
         printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出 (默认删除脚本)"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本"
         draw_divider
         
         read -p " 请输入选项 [0-7]: " choice || true
