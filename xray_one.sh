@@ -41,7 +41,7 @@ load_lang_en() {
     export ERROR_XRAY_INSTALL_FAILED="Xray installation failed or not found in PATH! Please check the installation log."
     export SUCCESS_XRAY_INSTALLED="Xray installed/updated successfully!"
     export CONFIGURING_XRAY=">>> Configuring Xray and generating nodes..."
-    export PROMPT_VLESS_PORT="Enter VLESS service port (default 443): "
+    export PROMPT_VLESS_PORT="Enter VLESS service port (default 22443): "
     export PROMPT_SS_PORT="Enter Shadowsocks service port (default 22338): "
     export PROMPT_SNI="Enter a destination domain (default: www.icloud.com): "
     export PROMPT_FLOW_CONTROL="Enable VLESS flow control (xtls-rprx-vision)? (Y/n): "
@@ -87,7 +87,7 @@ load_lang_zh() {
     export ERROR_XRAY_INSTALL_FAILED="Xray 安装失败或未在 PATH 中找到！请检查安装日志。"
     export SUCCESS_XRAY_INSTALLED="Xray 安装/更新成功！"
     export CONFIGURING_XRAY=">>> 正在为您配置 Xray 并生成节点..."
-    export PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 443): "
+    export PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 22443): "
     export PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 22338): "
     export PROMPT_SNI="请输入一个目标网站域名 (默认为 www.icloud.com): "
     export PROMPT_FLOW_CONTROL="是否启用 VLESS 流控 (xtls-rprx-vision)？(Y/n): "
@@ -183,7 +183,7 @@ install_xray() {
 
 configure_and_generate_links() {
     color_echo BLUE "$CONFIGURING_XRAY"
-    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-443}
+    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-22443}
     read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-22338}
     read -rp "$PROMPT_SNI" SNI; SNI=${SNI:-www.icloud.com}
     read -rp "$PROMPT_FLOW_CONTROL" FLOW_CHOICE
@@ -239,7 +239,7 @@ configure_and_generate_links() {
     { "listen": "0.0.0.0", "port": ${VLESS_PORT}, "protocol": "vless",
       "settings": { "clients": [ ${CLIENTS_JSON} ], "decryption": "none" },
       "streamSettings": { "network": "tcp", "security": "reality",
-        "realitySettings": { "show": false, "dest": "${SNI}:443", "xver": 0, "serverNames": [ "${SNI}" ], "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ] }
+        "realitySettings": { "show": false, "dest": "${SNI}:22443", "xver": 0, "serverNames": [ "${SNI}" ], "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ] }
       }, "sniffing": { "enabled": ${SNIFFING_ENABLED}, "destOverride": ["http", "tls"] }
     },
     { "listen": "0.0.0.0", "port": ${SS_PORT}, "protocol": "shadowsocks",
