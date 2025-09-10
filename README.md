@@ -1,24 +1,60 @@
-# xray_one
-修改于董事长的 xray-Dual
+脚本简介
+---
+Xray 全功能管理脚本 (v2.7) 功能介绍
 
+这是一个为 Xray-core 设计的一站式自动化管理工具，旨在极大地简化在 Linux 服务器上安装、配置、管理及维护 Xray 服务的过程。
 
-项目地址：
---
-https://github.com/yahuisme/xray-dual
---
+无论您是初次接触 Xray 的新手，还是需要快速部署节点的资深用户，该脚本都能提供直观、高效的操作体验。它通过一个清晰的交互式菜单，将所有常用功能整合在一起，让您无需深入研究和手动编辑复杂的 JSON 配置文件。
 
-介绍就去看他的吧！
+核心功能亮点
 
+一键安装与配置:
+自动从官方源下载并安装最新稳定版的 Xray-core。脚本会引导您完成 VLESS + REALITY 和 Shadowsocks-2022 两种主流协议的快速配置，整个过程仅需几步简单的选择。
 
+多语言界面:
+脚本启动时提供 中文 和 英文 两种语言界面选择，满足不同语言背景用户的需求。
+
+高度自定义配置:
+
+端口自定义: 您可以自由设定 VLESS 和 Shadowsocks 服务的端口，脚本已默认提供 10443 和 11443 作为推荐。
+
+域名伪装 (SNI): 支持自定义任意目标域名进行伪装，并贴心地默认提供了 www.icloud.com 作为备选项，简化输入。
+
+可选 VLESS 流控: 您可以自由选择是否为 VLESS 协议启用 xtls-rprx-vision 流控，脚本会同步更新服务端配置和客户端链接。
+
+可选流量嗅探: 支持按需开启或关闭流量嗅探（sniffing）功能。
+
+清晰的菜单结构:
+
+主菜单: 提供最常用的操作，如安装配置、查看节点、设置/取消开机自启，以及查看实时日志。
+
+服务管理子菜单: 将“更新内核”、“重启”、“停止”、“卸载”等高级维护操作整合到一个独立的二级菜单中，使整体结构更加清晰、不易误操作。
+
+全面的服务与节点管理:
+
+节点信息: 随时可以查看、复制已生成的节点分享链接。
+
+服务控制: 轻松实现对 Xray 服务的更新、重启、停止和卸载。
+
+开机自启: 一键设置或取消 Xray 服务的开机自启。
+
+强大的兼容性与稳定性:
+脚本经过多次迭代，修复了在不同 Shell 环境下的兼容性问题和密钥生成逻辑的稳定性问题，确保在绝大多数主流 Linux 发行版上都能可靠运行。
+
+如何使用
+通过以下一行命令即可下载并运行此脚本：
 
 ## 一键脚本
 ```
 bash <(curl -L https://raw.githubusercontent.com/xtonly/xray_one/refs/heads/main/xray_one.sh)
 ```
+支持的协议组合
+VLESS + REALITY: 目前最受推荐的高级伪装方案，安全、高效且不易被识别。
 
-## 无交互安装双协议
-```
-bash <(curl -L https://raw.githubusercontent.com/xtonly/xray_one/refs/heads/main/xray_one.sh) install --type dual --vless-port 30345 --uuid 'dd1a7cc1-6bbe-07de-9adc-f839b3feb749' --sni www.icloud.com --ss-port 30355 --ss-pass '6huv2yEkv*_$uL7l9z7Lri4u'
-```
+Shadowsocks-2022: 新一代的 Shadowsocks AEAD 加密协议，性能优越。
 
-以上无交互脚本均可以自行修改端口、UUID、网址和 ss-2022 密钥。
+
+
+
+
+
