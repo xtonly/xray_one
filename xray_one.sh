@@ -2,24 +2,23 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: v20250910-1800
+# 版本: v20250910-1900
 # ==============================================================================
 # 更新日志:
+# v20250910-1900: [重大更新] 重写核心安装与更新逻辑，通过API直接下载最新版，解决因官方脚本CDN缓存导致的版本更新失败和密钥生成失败问题。安装时自动创建专用xray用户并配置systemd服务，彻底修复“nobody”用户安全警告。
 # v20250910-1800: 跟进Xray-core v25.9.10, VLESS-Reality新增uTLS指纹(fp)与spiderX配置; Shadowsocks默认升级为SS2022(2022-blake3-aes-128-gcm).
 # v20250905-2310: 最终稳定版. 确认时间同步问题为最终解决方案, 固化所有修复.
-# v3.0: 新增 "切换调试日志模式" 功能, 用于深入排查疑难连接问题.
-# v2.9: 修复了双协议安装模式下SNI域名验证错误的Bug.
-# v2.8: 移除所有退出时删除脚本的逻辑, 选项0现在为直接退出.
 # ==============================================================================
 
 # --- Shell 兼容模式 ---
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="v20250910-1800"
+readonly SCRIPT_VERSION="v20250910-1900"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
-readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
+readonly xray_service_path="/etc/systemd/system/xray.service"
+readonly xray_data_dir="/usr/local/share/xray"
 
 # --- 颜色定义 ---
 readonly red='\e[91m' green='\e[92m' yellow='\e[93m'
@@ -33,6 +32,7 @@ cleanup() {
     echo -ne "${none}" # 重置终端颜色
     tput cnorm # 确保光标可见
     stty sane # 恢复终端到理智状态
+    cd ~ # 返回家目录
 }
 trap cleanup EXIT
 
@@ -74,12 +74,19 @@ get_public_ip() {
 pre_check() {
     [[ "$(id -u)" != 0 ]] && error "错误: 您必须以root用户身份运行此脚本" && exit 1
     if [ ! -f /etc/debian_version ]; then error "错误: 此脚本仅支持 Debian/Ubuntu 及其衍生系统。" && exit 1; fi
-    if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null; then
-        info "检测到缺失的依赖 (jq/curl)，正在尝试自动安装..."
-        (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y jq curl) &> /dev/null &
+    
+    local missing_deps=()
+    ! command -v jq &>/dev/null && missing_deps+=("jq")
+    ! command -v curl &>/dev/null && missing_deps+=("curl")
+    ! command -v wget &>/dev/null && missing_deps+=("wget")
+    ! command -v unzip &>/dev/null && missing_deps+=("unzip")
+
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        info "检测到缺失的依赖 (${missing_deps[*]}), 正在尝试自动安装..."
+        (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_deps[@]}") &> /dev/null &
         spinner $!
-        if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null; then
-            error "依赖 (jq/curl) 自动安装失败。请手动运行 'apt update && apt install -y jq curl' 后重试。"
+        if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null || ! command -v wget &>/dev/null || ! command -v unzip &>/dev/null; then
+            error "依赖自动安装失败。请手动运行 'apt update && apt install -y jq curl wget unzip' 后重试。"
             exit 1
         fi
         success "依赖已成功安装。"
@@ -114,7 +121,6 @@ check_xray_status() {
 
 # --- 核心配置生成函数 ---
 generate_ss_key() {
-    # SS 2022-blake3-aes-128-gcm 需要16字节 (128位) 密钥
     openssl rand -base64 16
 }
 
@@ -133,7 +139,6 @@ build_vless_inbound() {
         '{ "listen": "0.0.0.0", "port": $port, "protocol": "vless", "settings": {"clients": [{"id": $uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"show": false, "dest": ($domain + ":443"), "xver": 0, "serverNames": [$domain], "privateKey": $private_key, "publicKey": $public_key, "shortIds": [$shortid]}}, "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"]} }'
     )
 
-    # 有条件地添加新特性
     if [[ -n "$fingerprint" ]]; then
         base_inbound=$(echo "$base_inbound" | jq --arg fp "$fingerprint" '.streamSettings.realitySettings.serverFingerprint = $fp')
     fi
@@ -146,13 +151,13 @@ build_vless_inbound() {
 
 build_ss_inbound() {
     local port="$1" password="$2"
-    # SS 2022 标准加密
     jq -n --argjson port "$port" --arg password "$password" \
     '{ "listen": "0.0.0.0", "port": $port, "protocol": "shadowsocks", "settings": {"method": "2022-blake3-aes-128-gcm", "password": $password} }'
 }
 
 write_config() {
     local inbounds_json="$1"
+    mkdir -p "$(dirname "$xray_config_path")"
     jq -n --argjson inbounds "$inbounds_json" \
     '{
       "log": {"loglevel": "warning"},
@@ -168,36 +173,89 @@ write_config() {
     }' > "$xray_config_path"
 }
 
-execute_official_script() {
-    local args="$1"
-    local script_content
-    script_content=$(curl -L "$xray_install_script_url")
-    if [[ -z "$script_content" ]]; then
-        error "下载 Xray 官方安装脚本失败！请检查网络连接。"
-        return 1
+# --- 安装与更新核心逻辑 ---
+setup_systemd_service() {
+    info "正在配置 systemd 服务..."
+    if ! id -u xray >/dev/null 2>&1; then
+        info "正在创建专用的 xray 用户..."
+        useradd --system --no-create-home --shell /usr/sbin/nologin xray
     fi
     
-    bash -c "$script_content" @ $args &> /dev/null &
-    spinner $!
-    if ! wait $!; then
-        return 1
-    fi
+    cat <<EOF > "$xray_service_path"
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=xray
+Group=xray
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=${xray_binary_path} run -config ${xray_config_path}
+Restart=on-failure
+RestartPreventExitStatus=23
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable xray
+    success "Systemd 服务配置完成。"
 }
 
 run_core_install() {
-    info "正在下载并安装 Xray 核心..."
-    if ! execute_official_script "install"; then
-        error "Xray 核心安装失败！"
+    info "开始安装/更新 Xray 核心..."
+    
+    # 获取系统架构
+    local arch
+    case "$(uname -m)" in
+        x86_64) arch="64" ;;
+        aarch64) arch="arm64-v8a" ;;
+        *) error "不支持的系统架构: $(uname -m)"; return 1 ;;
+    esac
+
+    # 从 GitHub API 获取最新版本号
+    local latest_tag
+    latest_tag=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/latest" | jq -r '.tag_name')
+    if [[ -z "$latest_tag" ]]; then
+        error "从 GitHub API 获取最新版本号失败！"
+        return 1
+    fi
+    info "检测到最新版本为: ${cyan}${latest_tag}${none}"
+
+    local file_name="Xray-linux-${arch}.zip"
+    local download_url="https://github.com/XTLS/Xray-core/releases/download/${latest_tag}/${file_name}"
+
+    # 下载并安装
+    info "正在从 GitHub 下载核心文件..."
+    cd /tmp
+    wget -q --show-progress "$download_url"
+    if [[ $? -ne 0 ]]; then
+        error "下载失败！请检查网络连接或 GitHub release 页面。"
         return 1
     fi
     
-    info "正在更新 GeoIP 和 GeoSite 数据文件..."
-    if ! execute_official_script "install-geodata"; then
-        error "Geo-data 更新失败！"
-        info "这通常不影响核心功能，您可以稍后手动更新。"
-    fi
+    info "正在解压并安装..."
+    unzip -o "$file_name"
     
-    success "Xray 核心及数据文件已准备就绪。"
+    install -m 755 xray "$xray_binary_path"
+    mkdir -p "$xray_data_dir"
+    install -m 644 geoip.dat geosite.dat "$xray_data_dir"
+    
+    # 清理临时文件
+    rm -f "$file_name" xray geoip.dat geosite.dat
+    
+    # 配置服务
+    setup_systemd_service
+
+    # 赋予配置文件目录权限
+    mkdir -p "$(dirname "$xray_config_path")"
+    chown -R xray:xray "$(dirname "$xray_config_path")"
+
+    success "Xray 核心 ${cyan}${latest_tag}${none} 安装成功！"
 }
 
 
@@ -206,492 +264,128 @@ is_valid_port() {
     local port="$1"
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
-
 is_valid_domain() {
     local domain="$1"
     [[ "$domain" =~ ^[a-zA-Z0-9-]{1,63}(\.[a-zA-Z0-9-]{1,63})+$ ]] && [[ "$domain" != *--* ]]
 }
+draw_divider() { printf "%0.s─" {1..80}; printf "\n"; }
+draw_menu_header() { clear; echo -e "${cyan} Xray_One 管理脚本${none}"; echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"; local log_level; if [[ -f "$xray_config_path" ]]; then log_level=$(jq -r '.log.loglevel' "$xray_config_path" 2>/dev/null || echo "warning"); if [[ "$log_level" == "debug" ]]; then echo -e "${red} 调试日志模式: 开启${none}"; fi; fi; draw_divider; check_xray_status; echo -e "${xray_status_info}"; draw_divider; }
+press_any_key_to_continue() { echo ""; read -n 1 -s -r -p " 按任意键返回主菜单..." || true; }
 
 # --- 菜单功能函数 ---
-draw_divider() {
-    printf "%0.s─" {1..80}
-    printf "\n"
-}
-
-draw_menu_header() {
-    clear
-    echo -e "${cyan} Xray_One 管理脚本${none}"
-    echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
-    local log_level
-    if [[ -f "$xray_config_path" ]]; then
-        log_level=$(jq -r '.log.loglevel' "$xray_config_path" 2>/dev/null || echo "warning")
-        if [[ "$log_level" == "debug" ]]; then
-            echo -e "${red} 调试日志模式: 开启${none}"
-        fi
-    fi
-    draw_divider
-    check_xray_status
-    echo -e "${xray_status_info}"
-    draw_divider
-}
-
-press_any_key_to_continue() {
-    echo ""
-    read -n 1 -s -r -p " 按任意键返回主菜单..." || true
-}
-
 toggle_debug_mode() {
-    if [[ ! -f "$xray_config_path" ]]; then
-        error "错误: Xray 未安装或未生成配置文件。"
-        return
-    fi
-    
-    local current_level
-    current_level=$(jq -r '.log.loglevel' "$xray_config_path" 2>/dev/null || echo "warning")
-    
-    if [[ "$current_level" == "debug" ]]; then
-        jq '.log.loglevel = "warning"' "$xray_config_path" > "$xray_config_path.tmp" && mv "$xray_config_path.tmp" "$xray_config_path"
-        success "调试日志模式已关闭。"
-    else
-        jq '.log.loglevel = "debug"' "$xray_config_path" > "$xray_config_path.tmp" && mv "$xray_config_path.tmp" "$xray_config_path"
-        success "调试日志模式已开启。"
-        info "请立即使用选项 '6' 查看实时日志, 然后尝试用客户端连接以捕获错误信息。"
-    fi
+    if [[ ! -f "$xray_config_path" ]]; then error "错误: Xray 未安装或未生成配置文件。" && return; fi
+    local current_level; current_level=$(jq -r '.log.loglevel' "$xray_config_path" 2>/dev/null || echo "warning")
+    if [[ "$current_level" == "debug" ]]; then jq '.log.loglevel = "warning"' "$xray_config_path" > "$xray_config_path.tmp" && mv "$xray_config_path.tmp" "$xray_config_path"; success "调试日志模式已关闭。";
+    else jq '.log.loglevel = "debug"' "$xray_config_path" > "$xray_config_path.tmp" && mv "$xray_config_path.tmp" "$xray_config_path"; success "调试日志模式已开启。"; info "请立即使用选项 '6' 查看实时日志, 然后尝试用客户端连接以捕获错误信息。"; fi
     restart_xray
-}
-
-
-install_menu() {
-    clean_install_menu
 }
 
 clean_install_menu() {
     draw_menu_header
-    echo -e "${cyan} 请选择要安装的协议类型${none}"
-    draw_divider
-    printf "  ${green}%-2s${none} %-35s\n" "1." "仅 VLESS-Reality"
-    printf "  ${cyan}%-2s${none} %-35s\n" "2." "仅 Shadowsocks (SS2022)"
-    printf "  ${yellow}%-2s${none} %-35s\n" "3." "VLESS-Reality + Shadowsocks (双协议)"
-    draw_divider
-    printf "  ${magenta}%-2s${none} %-35s\n" "0." "返回主菜单"
-    draw_divider
+    echo -e "${cyan} 请选择要安装的协议类型${none}"; draw_divider
+    printf "  ${green}%-2s${none} %-35s\n" "1." "仅 VLESS-Reality"; printf "  ${cyan}%-2s${none} %-35s\n" "2." "仅 Shadowsocks (SS2022)"; printf "  ${yellow}%-2s${none} %-35s\n" "3." "VLESS-Reality + Shadowsocks (双协议)"; draw_divider
+    printf "  ${magenta}%-2s${none} %-35s\n" "0." "返回主菜单"; draw_divider
     read -p " 请输入选项 [0-3]: " choice || true
     case "$choice" in 1) install_vless_only ;; 2) install_ss_only ;; 3) install_dual ;; 0) return ;; *) error "无效选项。" ;; esac
 }
 
 install_vless_only() {
-    info "开始配置 VLESS-Reality..."
-    local port uuid domain fingerprint spiderX
-
-    while true; do
-        read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" port || true
-        [[ -z "$port" ]] && port=25433
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
-    done
-    
-    read -p "$(echo -e " -> 请输入UUID (留空将自动生成): ")" uuid || true
-    if [[ -z "$uuid" ]]; then
-        uuid=$(cat /proc/sys/kernel/random/uuid)
-        info "已为您生成随机UUID: ${cyan}${uuid}${none}"
-    fi
-    
-    while true; do
-        read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" domain || true
-        [[ -z "$domain" ]] && domain="www.icloud.com"
-        if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi
-    done
-
-    read -p "$(echo -e " -> 请输入 uTLS 指纹 (默认: ${cyan}chrome${none}): ")" fingerprint || true
-    [[ -z "$fingerprint" ]] && fingerprint="chrome"
-    
-    read -p "$(echo -e " -> 请输入 Reality spiderX 路径 (默认: ${cyan}/${none}): ")" spiderX || true
-    [[ -z "$spiderX" ]] && spiderX="/"
-
+    info "开始配置 VLESS-Reality..."; local port uuid domain fingerprint spiderX
+    while true; do read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" port || true; [[ -z "$port" ]] && port=25433; if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi; done
+    read -p "$(echo -e " -> 请输入UUID (留空将自动生成): ")" uuid || true; if [[ -z "$uuid" ]]; then uuid=$(cat /proc/sys/kernel/random/uuid); info "已为您生成随机UUID: ${cyan}${uuid}${none}"; fi
+    while true; do read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" domain || true; [[ -z "$domain" ]] && domain="www.icloud.com"; if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi; done
+    read -p "$(echo -e " -> 请输入 uTLS 指纹 (默认: ${cyan}chrome${none}): ")" fingerprint || true; [[ -z "$fingerprint" ]] && fingerprint="chrome"
+    read -p "$(echo -e " -> 请输入 Reality spiderX 路径 (默认: ${cyan}/${none}): ")" spiderX || true; [[ -z "$spiderX" ]] && spiderX="/"
     run_install_vless "$port" "$uuid" "$domain" "$fingerprint" "$spiderX"
 }
 
 install_ss_only() {
-    info "开始配置 Shadowsocks (SS2022)..."
-    local port password
-    while true; do
-        read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" port || true
-        [[ -z "$port" ]] && port=25338
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
-    done
-
-    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" password || true
-    if [[ -z "$password" ]]; then
-        password=$(generate_ss_key)
-        info "已为您生成随机密钥: ${cyan}${password}${none}"
-    fi
-    
+    info "开始配置 Shadowsocks (SS2022)..."; local port password
+    while true; do read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" port || true; [[ -z "$port" ]] && port=25338; if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi; done
+    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" password || true; if [[ -z "$password" ]]; then password=$(generate_ss_key); info "已为您生成随机密钥: ${cyan}${password}${none}"; fi
     run_install_ss "$port" "$password"
 }
 
 install_dual() {
-    info "开始配置双协议 (VLESS-Reality + Shadowsocks)..."
-    local vless_port vless_uuid vless_domain ss_port ss_password vless_fp vless_spx
-
-    while true; do
-        read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" vless_port || true
-        [[ -z "$vless_port" ]] && vless_port=25433
-        if is_valid_port "$vless_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
-    done
-    
-    if [[ "$vless_port" == "25433" ]]; then
-        while true; do
-            read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" ss_port || true
-            [[ -z "$ss_port" ]] && ss_port=25338
-            if is_valid_port "$ss_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
-        done
-    else
-        ss_port=$((vless_port + 1))
-        info "VLESS 端口设置为: ${cyan}${vless_port}${none}, Shadowsocks 端口将自动设置为: ${cyan}${ss_port}${none}"
-    fi
-    
-    read -p "$(echo -e " -> 请输入 VLESS UUID (留空将自动生成): ")" vless_uuid || true
-    if [[ -z "$vless_uuid" ]]; then
-        vless_uuid=$(cat /proc/sys/kernel/random/uuid)
-        info "已为您生成随机UUID: ${cyan}${vless_uuid}${none}"
-    fi
-
-    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" ss_password || true
-    if [[ -z "$ss_password" ]]; then
-        ss_password=$(generate_ss_key)
-        info "已为您生成随机密钥: ${cyan}${ss_password}${none}"
-    fi
-
-    while true; do
-        read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true
-        [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"
-        if is_valid_domain "$vless_domain"; then break; else error "域名格式无效，请重新输入。"; fi
-    done
-
-    read -p "$(echo -e " -> 请输入 VLESS uTLS 指纹 (默认: ${cyan}chrome${none}): ")" vless_fp || true
-    [[ -z "$vless_fp" ]] && vless_fp="chrome"
-    
-    read -p "$(echo -e " -> 请输入 VLESS Reality spiderX 路径 (默认: ${cyan}/${none}): ")" vless_spx || true
-    [[ -z "$vless_spx" ]] && vless_spx="/"
-
+    info "开始配置双协议..."; local vless_port vless_uuid vless_domain ss_port ss_password vless_fp vless_spx
+    while true; do read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" vless_port || true; [[ -z "$vless_port" ]] && vless_port=25433; if is_valid_port "$vless_port"; then break; else error "端口无效"; fi; done
+    if [[ "$vless_port" == "25433" ]]; then while true; do read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" ss_port || true; [[ -z "$ss_port" ]] && ss_port=25338; if is_valid_port "$ss_port"; then break; else error "端口无效"; fi; done; else ss_port=$((vless_port + 1)); info "VLESS 端口设置为: ${cyan}${vless_port}${none}, Shadowsocks 端口将自动设置为: ${cyan}${ss_port}${none}"; fi
+    read -p "$(echo -e " -> 请输入 VLESS UUID (留空自动生成): ")" vless_uuid || true; if [[ -z "$vless_uuid" ]]; then vless_uuid=$(cat /proc/sys/kernel/random/uuid); info "已生成UUID: ${cyan}${vless_uuid}${none}"; fi
+    read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空自动生成): ")" ss_password || true; if [[ -z "$ss_password" ]]; then ss_password=$(generate_ss_key); info "已生成密钥: ${cyan}${ss_password}${none}"; fi
+    while true; do read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true; [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"; if is_valid_domain "$vless_domain"; then break; else error "域名格式无效"; fi; done
+    read -p "$(echo -e " -> 请输入 VLESS uTLS 指纹 (默认: ${cyan}chrome${none}): ")" vless_fp || true; [[ -z "$vless_fp" ]] && vless_fp="chrome"
+    read -p "$(echo -e " -> 请输入 VLESS Reality spiderX 路径 (默认: ${cyan}/${none}): ")" vless_spx || true; [[ -z "$vless_spx" ]] && vless_spx="/"
     run_install_dual "$vless_port" "$vless_uuid" "$vless_domain" "$ss_port" "$ss_password" "$vless_fp" "$vless_spx"
-}
-
-update_xray() {
-    if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
-    info "正在检查最新版本..."
-    local current_version latest_version
-    current_version=$("$xray_binary_path" version | head -n 1 | awk '{print $2}')
-    latest_version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name' | sed 's/v//' || echo "")
-    
-    if [[ -z "$latest_version" ]]; then error "获取最新版本号失败，请检查网络或稍后重试。" && return; fi
-    info "当前版本: ${cyan}${current_version}${none}，最新版本: ${cyan}${latest_version}${none}"
-    
-    if [[ "$current_version" == "$latest_version" ]]; then
-        success "您的 Xray 已是最新版本。" && return
-    fi
-    
-    info "发现新版本，开始更新..."
-    run_core_install
-    restart_xray
-    success "Xray 更新成功！"
 }
 
 uninstall_xray() {
     if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
     read -p "$(echo -e "${yellow}您确定要卸载 Xray 吗？这将删除所有配置！[Y/n]: ${none}")" confirm || true
-    if [[ "$confirm" =~ ^[nN]$ ]]; then
-        info "操作已取消。"
-        return
-    fi
+    if [[ "$confirm" =~ ^[nN]$ ]]; then info "操作已取消。" && return; fi
+    
     info "正在卸载 Xray..."
-    if ! execute_official_script "remove --purge"; then
-        error "Xray 卸载失败！"
-        return 1
+    systemctl stop xray || true
+    systemctl disable xray || true
+    rm -rf "$xray_binary_path" "$xray_data_dir" "$(dirname "$xray_config_path")" "$xray_service_path"
+    
+    if id -u xray >/dev/null 2>&1; then
+        info "正在删除专用的 xray 用户..."
+        userdel xray
     fi
+    
     rm -f ~/xray_subscription_info.txt
     success "Xray 已成功卸载。"
 }
 
 modify_config_menu() {
     if [[ ! -f "$xray_config_path" ]]; then error "错误: Xray 未安装。" && return; fi
-    
-    local vless_exists="" ss_exists=""
-    if [[ -f "$xray_config_path" ]]; then
-        vless_exists=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-        ss_exists=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-    fi
-    
+    local vless_exists ss_exists
+    vless_exists=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
+    ss_exists=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
     if [[ -n "$vless_exists" && -n "$ss_exists" ]]; then
-        draw_menu_header
-        echo -e "${cyan} 请选择要修改的协议配置${none}"
-        draw_divider
-        printf "  ${green}%-2s${none} %-35s\n" "1." "VLESS-Reality"
-        printf "  ${cyan}%-2s${none} %-35s\n" "2." "Shadowsocks"
-        draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
-        draw_divider
+        draw_menu_header; echo -e "${cyan} 请选择要修改的协议配置${none}"; draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "VLESS-Reality"; printf "  ${cyan}%-2s${none} %-35s\n" "2." "Shadowsocks"; draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"; draw_divider
         read -p " 请输入选项 [0-2]: " choice || true
         case "$choice" in 1) modify_vless_config ;; 2) modify_ss_config ;; 0) return ;; *) error "无效选项。" ;; esac
-    elif [[ -n "$vless_exists" ]]; then
-        modify_vless_config
-    elif [[ -n "$ss_exists" ]]; then
-        modify_ss_config
-    else
-        error "未找到可修改的协议配置。"
-    fi
+    elif [[ -n "$vless_exists" ]]; then modify_vless_config
+    elif [[ -n "$ss_exists" ]]; then modify_ss_config
+    else error "未找到可修改的协议配置。"; fi
 }
 
-modify_vless_config() {
-    info "开始修改 VLESS-Reality 配置..."
-    local vless_inbound current_port current_uuid current_domain current_fp current_spx private_key public_key
-    local port uuid domain fingerprint spiderX
-    local new_vless_inbound ss_inbound new_inbounds
-
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path")
-    current_port=$(echo "$vless_inbound" | jq -r '.port')
-    current_uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
-    current_domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]')
-    current_fp=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverFingerprint // "chrome"')
-    current_spx=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.spiderX // "/"')
-    private_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.privateKey')
-    public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey')
-    
-    while true; do
-        read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
-        [[ -z "$port" ]] && port=$current_port
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
-    done
-    
-    read -p "$(echo -e " -> 新UUID (当前: ${cyan}${current_uuid:0:8}...${none}, 留空不改): ")" uuid || true
-    [[ -z "$uuid" ]] && uuid=$current_uuid
-    
-    while true; do
-        read -p "$(echo -e " -> 新SNI域名 (当前: ${cyan}${current_domain}${none}, 留空不改): ")" domain || true
-        [[ -z "$domain" ]] && domain=$current_domain
-        if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi
-    done
-
-    read -p "$(echo -e " -> 新uTLS指纹 (当前: ${cyan}${current_fp}${none}, 留空不改): ")" fingerprint || true
-    [[ -z "$fingerprint" ]] && fingerprint=$current_fp
-
-    read -p "$(echo -e " -> 新spiderX路径 (当前: ${cyan}${current_spx}${none}, 留空不改): ")" spiderX || true
-    [[ -z "$spiderX" ]] && spiderX=$current_spx
-
-    new_vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$public_key" "$fingerprint" "$spiderX")
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-    
-    new_inbounds="[$new_vless_inbound]"
-    [[ -n "$ss_inbound" ]] && new_inbounds="[$new_vless_inbound, $ss_inbound]"
-    
-    write_config "$new_inbounds"
-    restart_xray
-    success "配置修改成功！"
-    view_all_info
-}
-
-modify_ss_config() {
-    info "开始修改 Shadowsocks 配置..."
-    local ss_inbound current_port current_password
-    local port password
-    local new_ss_inbound vless_inbound new_inbounds
-
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
-    current_port=$(echo "$ss_inbound" | jq -r '.port')
-    current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
-    
-    while true; do
-        read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
-        [[ -z "$port" ]] && port=$current_port
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
-    done
-    
-    read -p "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")" password || true
-    [[ -z "$password" ]] && password=$current_password
-    
-    new_ss_inbound=$(build_ss_inbound "$port" "$password")
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-    
-    new_inbounds="[$new_ss_inbound]"
-    [[ -n "$vless_inbound" ]] && new_inbounds="[$vless_inbound, $new_ss_inbound]"
-    
-    write_config "$new_inbounds"
-    restart_xray
-    success "配置修改成功！"
-    view_all_info
-}
-
-restart_xray() {
-    if [[ ! -f "$xray_binary_path" ]]; then
-        error "错误: Xray 未安装。"
-        return 1
-    fi
-    info "正在重启 Xray 服务..."
-    if ! systemctl restart xray; then
-        error "尝试重启 Xray 服务失败！请使用“查看日志”功能检查具体错误。"
-        return 1
-    fi
-    sleep 1
-    if systemctl is-active --quiet xray; then
-        success "Xray 服务已成功重启！"
-    else
-        error "服务启动失败, 请使用“查看日志”功能检查错误。"
-        return 1
-    fi
-}
-
-view_xray_log() {
-    if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
-    info "正在显示 Xray 实时日志... 按 Ctrl+C 退出。"
-    journalctl -u xray -f --no-pager
-}
-
-view_all_info() {
-    if [ ! -f "$xray_config_path" ]; then
-        error "错误: 配置文件不存在。"
-        return
-    fi
-    clear
-    echo -e "${cyan} Xray 配置及订阅信息${none}"
-    draw_divider
-    
-    local ip
-    ip=$(get_public_ip)
-    if [[ -z "$ip" ]]; then
-        error "无法获取公网 IP 地址。"
-        return 1
-    fi
-    
-    local host
-    host=$(hostname)
-    local links_array=()
-    
-    # --- VLESS-Reality ---
-    local vless_inbound
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-    if [[ -n "$vless_inbound" ]]; then
-        local uuid port domain public_key shortid fingerprint spiderX
-        local display_ip link_name_raw link_name_encoded vless_url
-        
-        uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
-        port=$(echo "$vless_inbound" | jq -r '.port')
-        domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]')
-        public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey')
-        shortid=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]')
-        fingerprint=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverFingerprint // "chrome"')
-        spiderX=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.spiderX // "/"' | sed 's/\//%2F/g')
-        
-        display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"
-        link_name_raw="$host"
-        link_name_encoded=$(echo "$link_name_raw" | sed 's/ /%20/g')
-        
-        vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&spx=${spiderX}&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"
-        links_array+=("$vless_url")
-        
-        echo -e "${green} [ VLESS-Reality 配置 ]${none}"
-        printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-        printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-        printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"
-        printf "    %s: ${cyan}%s${none}\n" "SNI 域名" "$domain"
-        printf "    %s: ${cyan}%s${none}\n" "uTLS 指纹" "$fingerprint"
-        printf "    %s: ${cyan}%s${none}\n" "SpiderX" "$(echo -e "${spiderX//%2F/\\/}")"
-    fi
-    
-    # --- Shadowsocks ---
-    local ss_inbound
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-    if [[ -n "$ss_inbound" ]]; then
-        local port method password
-        local link_name_raw user_info_base64 ss_url
-        
-        port=$(echo "$ss_inbound" | jq -r '.port')
-        method=$(echo "$ss_inbound" | jq -r '.settings.method')
-        password=$(echo "$ss_inbound" | jq -r '.settings.password')
-        
-        link_name_raw="$host-SS"
-        user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
-        ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
-        links_array+=("$ss_url")
-        
-        echo ""
-        echo -e "${green} [ Shadowsocks 配置 ]${none}"
-        printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-        printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-        printf "    %s: ${cyan}%s${none}\n" "加密方式" "$method"
-        printf "    %s: ${cyan}%s${none}\n" "密钥 (Password)" "$password"
-    fi
-    
-    if [ ${#links_array[@]} -gt 0 ]; then
-        draw_divider
-        printf "%s\n" "${links_array[@]}" > ~/xray_subscription_info.txt
-        success "所有订阅链接已汇总保存到: ~/xray_subscription_info.txt"
-        echo -e "\n${yellow} --- V2Ray / Clash 等客户端可直接导入以下链接 --- ${none}\n"
-        for link in "${links_array[@]}"; do
-            echo -e "${cyan}${link}${none}\n"
-        done
-        draw_divider
-    else
-        info "当前未安装任何协议，无订阅信息可显示。"
-    fi
-}
+modify_vless_config() { info "开始修改 VLESS-Reality 配置..."; local vless_inbound current_port current_uuid current_domain current_fp current_spx private_key public_key port uuid domain fingerprint spiderX new_vless_inbound ss_inbound new_inbounds; vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path"); current_port=$(echo "$vless_inbound" | jq -r '.port'); current_uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id'); current_domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]'); current_fp=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverFingerprint // "chrome"'); current_spx=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.spiderX // "/"'); private_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.privateKey'); public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey'); while true; do read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true; [[ -z "$port" ]] && port=$current_port; if is_valid_port "$port"; then break; else error "端口无效"; fi; done; read -p "$(echo -e " -> 新UUID (当前: ${cyan}${current_uuid:0:8}...${none}, 留空不改): ")" uuid || true; [[ -z "$uuid" ]] && uuid=$current_uuid; while true; do read -p "$(echo -e " -> 新SNI域名 (当前: ${cyan}${current_domain}${none}, 留空不改): ")" domain || true; [[ -z "$domain" ]] && domain=$current_domain; if is_valid_domain "$domain"; then break; else error "域名格式无效"; fi; done; read -p "$(echo -e " -> 新uTLS指纹 (当前: ${cyan}${current_fp}${none}, 留空不改): ")" fingerprint || true; [[ -z "$fingerprint" ]] && fingerprint=$current_fp; read -p "$(echo -e " -> 新spiderX路径 (当前: ${cyan}${current_spx}${none}, 留空不改): ")" spiderX || true; [[ -z "$spiderX" ]] && spiderX=$current_spx; new_vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$public_key" "$fingerprint" "$spiderX"); ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true); new_inbounds="[$new_vless_inbound]"; [[ -n "$ss_inbound" ]] && new_inbounds="[$new_vless_inbound, $ss_inbound]"; write_config "$new_inbounds"; restart_xray; success "配置修改成功！"; view_all_info; }
+modify_ss_config() { info "开始修改 Shadowsocks 配置..."; local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds; ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path"); current_port=$(echo "$ss_inbound" | jq -r '.port'); current_password=$(echo "$ss_inbound" | jq -r '.settings.password'); while true; do read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true; [[ -z "$port" ]] && port=$current_port; if is_valid_port "$port"; then break; else error "端口无效"; fi; done; read -p "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")" password || true; [[ -z "$password" ]] && password=$current_password; new_ss_inbound=$(build_ss_inbound "$port" "$password"); vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true); new_inbounds="[$new_ss_inbound]"; [[ -n "$vless_inbound" ]] && new_inbounds="[$vless_inbound, $new_ss_inbound]"; write_config "$new_inbounds"; restart_xray; success "配置修改成功！"; view_all_info; }
+restart_xray() { if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return 1; fi; info "正在重启 Xray 服务..."; if ! systemctl restart xray; then error "尝试重启 Xray 服务失败！请使用“查看日志”功能检查具体错误。"; return 1; fi; sleep 1; if systemctl is-active --quiet xray; then success "Xray 服务已成功重启！"; else error "服务启动失败, 请使用“查看日志”功能检查错误。"; return 1; fi; }
+view_xray_log() { if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi; info "正在显示 Xray 实时日志... 按 Ctrl+C 退出。"; journalctl -u xray -f --no-pager; }
+view_all_info() { if [ ! -f "$xray_config_path" ]; then error "错误: 配置文件不存在。"; return; fi; clear; echo -e "${cyan} Xray 配置及订阅信息${none}"; draw_divider; local ip; ip=$(get_public_ip); if [[ -z "$ip" ]]; then error "无法获取公网 IP 地址。" && return 1; fi; local host; host=$(hostname); local links_array=(); local vless_inbound; vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true); if [[ -n "$vless_inbound" ]]; then local uuid port domain public_key shortid fingerprint spiderX display_ip link_name_raw link_name_encoded vless_url; uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id'); port=$(echo "$vless_inbound" | jq -r '.port'); domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]'); public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey'); shortid=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]'); fingerprint=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverFingerprint // "chrome"'); spiderX=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.spiderX // "/"' | sed 's/\//%2F/g'); display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"; link_name_raw="$host"; link_name_encoded=$(echo "$link_name_raw" | sed 's/ /%20/g'); vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&spx=${spiderX}&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"; links_array+=("$vless_url"); echo -e "${green} [ VLESS-Reality 配置 ]${none}"; printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"; printf "    %s: ${cyan}%s${none}\n" "端口" "$port"; printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"; printf "    %s: ${cyan}%s${none}\n" "SNI 域名" "$domain"; printf "    %s: ${cyan}%s${none}\n" "uTLS 指纹" "$fingerprint"; printf "    %s: ${cyan}%s${none}\n" "SpiderX" "$(echo -e "${spiderX//%2F/\\/}")"; fi; local ss_inbound; ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true); if [[ -n "$ss_inbound" ]]; then local port method password link_name_raw user_info_base64 ss_url; port=$(echo "$ss_inbound" | jq -r '.port'); method=$(echo "$ss_inbound" | jq -r '.settings.method'); password=$(echo "$ss_inbound" | jq -r '.settings.password'); link_name_raw="$host-SS"; user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0); ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"; links_array+=("$ss_url"); echo ""; echo -e "${green} [ Shadowsocks 配置 ]${none}"; printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"; printf "    %s: ${cyan}%s${none}\n" "端口" "$port"; printf "    %s: ${cyan}%s${none}\n" "加密方式" "$method"; printf "    %s: ${cyan}%s${none}\n" "密钥 (Password)" "$password"; fi; if [ ${#links_array[@]} -gt 0 ]; then draw_divider; printf "%s\n" "${links_array[@]}" > ~/xray_subscription_info.txt; success "所有订阅链接已汇总保存到: ~/xray_subscription_info.txt"; echo -e "\n${yellow} --- V2Ray / Clash 等客户端可直接导入以下链接 --- ${none}\n"; for link in "${links_array[@]}"; do echo -e "${cyan}${link}${none}\n"; done; draw_divider; else info "当前未安装任何协议，无订阅信息可显示。"; fi; }
 
 run_install_vless() {
-    local port="$1" uuid="$2" domain="$3" fingerprint="$4" spiderX="$5"
     run_core_install || exit 1
-    
-    info "正在生成 Reality 密钥对..."
-    local key_pair private_key public_key
+    info "正在生成 Reality 密钥对..."; local port="$1" uuid="$2" domain="$3" fingerprint="$4" spiderX="$5" key_pair private_key public_key vless_inbound
     key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
     private_key=$(echo "$key_pair" | awk '/PrivateKey:/ {print $2}')
     public_key=$(echo "$key_pair" | awk '/PublicKey:/ {print $2}')
-    
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-        exit 1
-    fi
-    
-    local vless_inbound
+    if [[ -z "$private_key" || -z "$public_key" ]]; then error "生成 Reality 密钥对失败！" && exit 1; fi
     vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$public_key" "$fingerprint" "$spiderX")
-    write_config "[$vless_inbound]"
-    restart_xray
-    success "VLESS-Reality 安装成功！"
-    view_all_info
+    write_config "[$vless_inbound]"; restart_xray; success "VLESS-Reality 安装成功！"; view_all_info
 }
-
 run_install_ss() {
-    local port="$1" password="$2"
     run_core_install || exit 1
-    
-    local ss_inbound
+    local port="$1" password="$2" ss_inbound
     ss_inbound=$(build_ss_inbound "$port" "$password")
-    write_config "[$ss_inbound]"
-    restart_xray
-    success "Shadowsocks 安装成功！"
-    view_all_info
+    write_config "[$ss_inbound]"; restart_xray; success "Shadowsocks 安装成功！"; view_all_info
 }
-
 run_install_dual() {
-    local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5" vless_fp="$6" vless_spx="$7"
     run_core_install || exit 1
-
-    info "正在生成 Reality 密钥对..."
-    local key_pair private_key public_key
+    info "正在生成 Reality 密钥对..."; local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5" vless_fp="$6" vless_spx="$7" key_pair private_key public_key vless_inbound ss_inbound
     key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
     private_key=$(echo "$key_pair" | awk '/PrivateKey:/ {print $2}')
     public_key=$(echo "$key_pair" | awk '/PublicKey:/ {print $2}')
-    
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-        exit 1
-    fi
-    
-    local vless_inbound ss_inbound
+    if [[ -z "$private_key" || -z "$public_key" ]]; then error "生成 Reality 密钥对失败！" && exit 1; fi
     vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$public_key" "$vless_fp" "$vless_spx")
     ss_inbound=$(build_ss_inbound "$ss_port" "$ss_password")
-    
-    write_config "[$vless_inbound, $ss_inbound]"
-    restart_xray
-    success "双协议安装成功！"
-    view_all_info
+    write_config "[$vless_inbound, $ss_inbound]"; restart_xray; success "双协议安装成功！"; view_all_info
 }
 
 # --- 主菜单与脚本入口 ---
@@ -714,34 +408,26 @@ main_menu() {
         read -p " 请输入选项 [0-8]: " choice || true
         
         local needs_pause=true
-        
         case "$choice" in
-            1) install_menu ;;
-            2) update_xray ;;
+            1) clean_install_menu ;;
+            2) run_core_install && restart_xray ;;
             3) uninstall_xray ;;
             4) modify_config_menu ;;
             5) restart_xray ;;
             6) view_xray_log; needs_pause=false ;;
             7) view_all_info ;;
             8) toggle_debug_mode ;;
-            0) 
-                success "感谢使用！"
-                exit 0
-                ;;
-            *) 
-                error "无效选项。请输入0到8之间的数字。" 
-                ;;
+            0) success "感谢使用！"; exit 0 ;;
+            *) error "无效选项。" ;;
         esac
         
-        if [ "$needs_pause" = true ]; then
-            press_any_key_to_continue
-        fi
+        if [ "$needs_pause" = true ]; then press_any_key_to_continue; fi
     done
 }
 
 main() {
     pre_check
-    main_menu
+    main_menu "$@"
 }
 
 main "$@"
