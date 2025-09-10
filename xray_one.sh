@@ -1,11 +1,15 @@
 #!/bin/bash
 
 # =================================================================
-# VLESS+REALITY & Shadowsocks (SS2022) 配置生成脚本
+# VLESS+REALITY & Shadowsocks (SS2022) 配置生成脚本 (v2 - 已修正)
 #
 # 该脚本会生成可直接导入客户端的分享链接。
 # VLESS 节点备注为服务器的 hostname。
 # Shadowsocks 节点备注为服务器的 hostname-SS。
+#
+# v2 更新日志:
+# - 修正了 Shadowsocks (SS2022) URI 格式问题。
+#   根据 SIP002 标准，对 method:password 部分进行 Base64 编码。
 # =================================================================
 
 # --- 函数定义 ---
@@ -37,13 +41,17 @@ check_deps() {
             exit 1
         fi
     fi
+    if ! command -v base64 &> /dev/null; then
+        print_color "red" "错误: 'base64' 命令未找到，无法继续。请安装 coreutils。"
+        exit 1
+    fi
 }
 
 # --- 主逻辑开始 ---
 
 clear
 print_color "green" "============================================================"
-print_color "green" "      VLESS+REALITY 和 Shadowsocks (SS2022) 配置生成器     "
+print_color "green" "    VLESS+REALITY 和 Shadowsocks (SS2022) 配置生成器 (v2)   "
 print_color "green" "============================================================"
 echo
 
@@ -89,7 +97,6 @@ if [ -z "$SNI" ]; then
 fi
 
 # 组装 VLESS 链接
-# 格式: vless://uuid@hostname:port?encryption=none&security=reality&sni=sni_domain&pbk=public_key&sid=short_id&type=tcp#remark
 VLESS_LINK="vless://${UUID}@${SERVER_HOST}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${SERVER_HOST}"
 
 echo
@@ -114,10 +121,12 @@ case $SS_METHOD_CHOICE in
         ;;
 esac
 
-# 根据加密方法生成相应长度的密码
+# 根据加密方法生成相应长度的密码 (已经是 Base64 编码)
 if [[ "$SS_METHOD" == "2022-blake3-aes-128-gcm" ]]; then
+    # 16 bytes, base64 encoded
     SS_PASSWORD=$(openssl rand -base64 16)
 else
+    # 32 bytes, base64 encoded
     SS_PASSWORD=$(openssl rand -base64 32)
 fi
 
@@ -125,10 +134,15 @@ fi
 read -p "请输入 Shadowsocks 服务的端口 (默认 8443): " SS_PORT
 SS_PORT=${SS_PORT:-8443}
 
+# 【修正部分】将 method:password 进行 Base64 编码
+# echo -n 表示不输出末尾的换行符
+# base64 -w 0 表示不进行自动换行
+USER_INFO_RAW="${SS_METHOD}:${SS_PASSWORD}"
+USER_INFO_B64=$(echo -n "$USER_INFO_RAW" | base64 -w 0)
+
 # 组装 SS2022 链接
-# 格式: ss://method:password@hostname:port#remark
 SS_REMARK="${SERVER_HOST}-SS"
-SS_LINK="ss://${SS_METHOD}:${SS_PASSWORD}@${SERVER_HOST}:${SS_PORT}#${SS_REMARK}"
+SS_LINK="ss://${USER_INFO_B64}@${SERVER_HOST}:${SS_PORT}#${SS_REMARK}"
 
 echo
 print_color "green" "✅ Shadowsocks (SS2022) 配置已生成！"
@@ -136,7 +150,7 @@ echo
 
 # --- 显示结果 ---
 
-print_color "green" "======================= 配置信息 ======================="
+print_color "green" "======================= 配置信息 (修正版) ======================="
 echo
 print_color "yellow" "[VLESS + REALITY 节点链接]"
 echo "${VLESS_LINK}"
@@ -144,7 +158,7 @@ echo
 print_color "yellow" "[Shadowsocks (SS2022) 节点链接]"
 echo "${SS_LINK}"
 echo
-print_color "green" "=========================================================="
+print_color "green" "================================================================"
 print_color "green" "将以上链接直接复制到您的客户端中即可使用。"
 echo
 print_color "yellow" "注意：此脚本仅生成配置信息，您仍需在服务器上正确部署并运行相应的服务 (如 Xray) 以使节点生效。"
