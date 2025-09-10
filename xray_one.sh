@@ -9,9 +9,9 @@
 #   DESCRIPTION: An all-in-one script for installing, configuring, managing, and uninstalling Xray.
 #                Supports VLESS+REALITY and Shadowsocks-2022.
 #
-#      REVISION: 2.0 - [Feature Update & Fix] Addressed VLESS connectivity issues and
-#                      incorporated new features from recent Xray versions.
-#                      Updated cipher suites and improved configuration options.
+#      REVISION: 2.1 - [Critical Fix] Updated REALITY key generation to parse JSON
+#                      output from `xray x25519` command in newer Xray versions.
+#                      Added automatic installation of `jq` dependency.
 #
 #====================================================================================
 
@@ -41,6 +41,29 @@ check_root() {
         exit 1
     fi
 }
+
+# Check and install jq
+check_and_install_jq() {
+    if ! command -v jq &>/dev/null; then
+        color_echo YELLOW "jq is not installed. Attempting to install..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update && apt-get install -y jq
+        elif command -v yum &>/dev/null; then
+            yum install -y jq
+        elif command -v dnf &>/dev/null; then
+            dnf install -y jq
+        else
+            color_echo RED "Could not find a package manager to install jq. Please install it manually."
+            exit 1
+        fi
+        if ! command -v jq &>/dev/null; then
+            color_echo RED "Failed to install jq. Please install it manually."
+            exit 1
+        fi
+        color_echo GREEN "jq installed successfully."
+    fi
+}
+
 
 # Pause the script and wait for user input
 pause() {
@@ -105,6 +128,9 @@ install_xray() {
 # Configure Xray and generate node information
 configure_and_generate_links() {
     color_echo BLUE ">>> Configuring Xray and generating nodes for you..."
+    
+    # Check for jq dependency
+    check_and_install_jq
 
     read -rp "Enter VLESS service port (default 443): " VLESS_PORT
     VLESS_PORT=${VLESS_PORT:-443}
@@ -119,12 +145,15 @@ configure_and_generate_links() {
     XVER=${XVER:-0}
 
     UUID=$(xray uuid)
-    KEY_PAIR=$(xray x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -i "private" | cut -d':' -f2 | xargs)
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i "public" | cut -d':' -f2 | xargs)
+    
+    # --- [v2.1 FIX] Use jq to parse JSON output from xray x25519 ---
+    KEY_PAIR_JSON=$(xray x25519)
+    PRIVATE_KEY=$(echo "$KEY_PAIR_JSON" | jq -r .private_key)
+    PUBLIC_KEY=$(echo "$KEY_PAIR_JSON" | jq -r .public_key)
+    # --- END FIX ---
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        color_echo RED "Error: Failed to generate REALITY key pair! Please run 'xray x25519' manually to check for errors."
+        color_echo RED "Error: Failed to generate REALITY key pair! Please check if Xray is installed correctly."
         return 1
     fi
 
@@ -245,7 +274,7 @@ uninstall_xray() {
 show_menu() {
     clear
     color_echo GREEN "=========================================================="
-    color_echo GREEN "          Xray All-in-One Management Script v2.0 (VLESS/SS)"
+    color_echo GREEN "          Xray All-in-One Management Script v2.1 (VLESS/SS)"
     color_echo GREEN "=========================================================="
     color_echo BLUE "  1. Install and Configure Xray (Select for first time/reconfiguration)"
     color_echo BLUE "  2. View Node Information"
