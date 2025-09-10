@@ -2,19 +2,18 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: v20250910-1900
+# 版本: v20250910-2000 (稳定修复版)
 # ==============================================================================
 # 更新日志:
-# v20250910-1900: [重大更新] 重写核心安装与更新逻辑，通过API直接下载最新版，解决因官方脚本CDN缓存导致的版本更新失败和密钥生成失败问题。安装时自动创建专用xray用户并配置systemd服务，彻底修复“nobody”用户安全警告。
+# v20250910-2000: [重大更新] 重写核心安装与更新逻辑，通过API直接下载最新版，解决因官方脚本CDN缓存导致的版本更新失败和密钥生成失败问题。安装时自动创建专用xray用户并配置systemd服务，彻底修复“nobody”用户安全警告。
 # v20250910-1800: 跟进Xray-core v25.9.10, VLESS-Reality新增uTLS指纹(fp)与spiderX配置; Shadowsocks默认升级为SS2022(2022-blake3-aes-128-gcm).
-# v20250905-2310: 最终稳定版. 确认时间同步问题为最终解决方案, 固化所有修复.
 # ==============================================================================
 
 # --- Shell 兼容模式 ---
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="v20250910-1900"
+readonly SCRIPT_VERSION="v20250910-2000 (稳定修复版)"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_service_path="/etc/systemd/system/xray.service"
@@ -126,7 +125,7 @@ generate_ss_key() {
 
 build_vless_inbound() {
     local port="$1" uuid="$2" domain="$3" private_key="$4" public_key="$5" fingerprint="$6" spiderX="$7"
-    local shortid="20220701"
+    local shortid="20250910"
     
     local base_inbound
     base_inbound=$(jq -n \
@@ -175,7 +174,7 @@ write_config() {
 
 # --- 安装与更新核心逻辑 ---
 setup_systemd_service() {
-    info "正在配置 systemd 服务..."
+    info "正在配置 systemd 安全服务..."
     if ! id -u xray >/dev/null 2>&1; then
         info "正在创建专用的 xray 用户..."
         useradd --system --no-create-home --shell /usr/sbin/nologin xray
@@ -196,6 +195,8 @@ NoNewPrivileges=true
 ExecStart=${xray_binary_path} run -config ${xray_config_path}
 Restart=on-failure
 RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
 
 [Install]
 WantedBy=multi-user.target
@@ -207,7 +208,7 @@ EOF
 }
 
 run_core_install() {
-    info "开始安装/更新 Xray 核心..."
+    info "开始安装/更新 Xray 核心 (稳健模式)..."
     
     # 获取系统架构
     local arch
@@ -220,8 +221,8 @@ run_core_install() {
     # 从 GitHub API 获取最新版本号
     local latest_tag
     latest_tag=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/latest" | jq -r '.tag_name')
-    if [[ -z "$latest_tag" ]]; then
-        error "从 GitHub API 获取最新版本号失败！"
+    if [[ -z "$latest_tag" || "$latest_tag" == "null" ]]; then
+        error "从 GitHub API 获取最新版本号失败！请检查网络或稍后再试。"
         return 1
     fi
     info "检测到最新版本为: ${cyan}${latest_tag}${none}"
@@ -232,21 +233,23 @@ run_core_install() {
     # 下载并安装
     info "正在从 GitHub 下载核心文件..."
     cd /tmp
-    wget -q --show-progress "$download_url"
-    if [[ $? -ne 0 ]]; then
+    if ! wget -q --show-progress "$download_url"; then
         error "下载失败！请检查网络连接或 GitHub release 页面。"
         return 1
     fi
     
+    info "正在停止当前服务..."
+    systemctl stop xray || true
+
     info "正在解压并安装..."
-    unzip -o "$file_name"
+    unzip -o "$file_name" -d /tmp/xray_temp
     
-    install -m 755 xray "$xray_binary_path"
+    install -m 755 /tmp/xray_temp/xray "$xray_binary_path"
     mkdir -p "$xray_data_dir"
-    install -m 644 geoip.dat geosite.dat "$xray_data_dir"
+    install -m 644 /tmp/xray_temp/geoip.dat /tmp/xray_temp/geosite.dat "$xray_data_dir"
     
     # 清理临时文件
-    rm -f "$file_name" xray geoip.dat geosite.dat
+    rm -rf /tmp/xray_temp /tmp/"$file_name"
     
     # 配置服务
     setup_systemd_service
@@ -256,6 +259,7 @@ run_core_install() {
     chown -R xray:xray "$(dirname "$xray_config_path")"
 
     success "Xray 核心 ${cyan}${latest_tag}${none} 安装成功！"
+    info "现在您可以配置协议并启动服务了。"
 }
 
 
@@ -292,9 +296,9 @@ clean_install_menu() {
 
 install_vless_only() {
     info "开始配置 VLESS-Reality..."; local port uuid domain fingerprint spiderX
-    while true; do read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" port || true; [[ -z "$port" ]] && port=25433; if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi; done
+    while true; do read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}443${none}): ")" port || true; [[ -z "$port" ]] && port=443; if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi; done
     read -p "$(echo -e " -> 请输入UUID (留空将自动生成): ")" uuid || true; if [[ -z "$uuid" ]]; then uuid=$(cat /proc/sys/kernel/random/uuid); info "已为您生成随机UUID: ${cyan}${uuid}${none}"; fi
-    while true; do read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" domain || true; [[ -z "$domain" ]] && domain="www.icloud.com"; if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi; done
+    while true; do read -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}www.microsoft.com${none}): ")" domain || true; [[ -z "$domain" ]] && domain="www.microsoft.com"; if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi; done
     read -p "$(echo -e " -> 请输入 uTLS 指纹 (默认: ${cyan}chrome${none}): ")" fingerprint || true; [[ -z "$fingerprint" ]] && fingerprint="chrome"
     read -p "$(echo -e " -> 请输入 Reality spiderX 路径 (默认: ${cyan}/${none}): ")" spiderX || true; [[ -z "$spiderX" ]] && spiderX="/"
     run_install_vless "$port" "$uuid" "$domain" "$fingerprint" "$spiderX"
@@ -302,18 +306,18 @@ install_vless_only() {
 
 install_ss_only() {
     info "开始配置 Shadowsocks (SS2022)..."; local port password
-    while true; do read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" port || true; [[ -z "$port" ]] && port=25338; if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi; done
+    while true; do read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}9001${none}): ")" port || true; [[ -z "$port" ]] && port=9001; if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi; done
     read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" password || true; if [[ -z "$password" ]]; then password=$(generate_ss_key); info "已为您生成随机密钥: ${cyan}${password}${none}"; fi
     run_install_ss "$port" "$password"
 }
 
 install_dual() {
     info "开始配置双协议..."; local vless_port vless_uuid vless_domain ss_port ss_password vless_fp vless_spx
-    while true; do read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" vless_port || true; [[ -z "$vless_port" ]] && vless_port=25433; if is_valid_port "$vless_port"; then break; else error "端口无效"; fi; done
-    if [[ "$vless_port" == "25433" ]]; then while true; do read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" ss_port || true; [[ -z "$ss_port" ]] && ss_port=25338; if is_valid_port "$ss_port"; then break; else error "端口无效"; fi; done; else ss_port=$((vless_port + 1)); info "VLESS 端口设置为: ${cyan}${vless_port}${none}, Shadowsocks 端口将自动设置为: ${cyan}${ss_port}${none}"; fi
+    while true; do read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}443${none}): ")" vless_port || true; [[ -z "$vless_port" ]] && vless_port=443; if is_valid_port "$vless_port"; then break; else error "端口无效"; fi; done
+    if [[ "$vless_port" == "443" ]]; then while true; do read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}9001${none}): ")" ss_port || true; [[ -z "$ss_port" ]] && ss_port=9001; if is_valid_port "$ss_port"; then break; else error "端口无效"; fi; done; else ss_port=$((vless_port + 1)); info "VLESS 端口设置为: ${cyan}${vless_port}${none}, Shadowsocks 端口将自动设置为: ${cyan}${ss_port}${none}"; fi
     read -p "$(echo -e " -> 请输入 VLESS UUID (留空自动生成): ")" vless_uuid || true; if [[ -z "$vless_uuid" ]]; then vless_uuid=$(cat /proc/sys/kernel/random/uuid); info "已生成UUID: ${cyan}${vless_uuid}${none}"; fi
     read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空自动生成): ")" ss_password || true; if [[ -z "$ss_password" ]]; then ss_password=$(generate_ss_key); info "已生成密钥: ${cyan}${ss_password}${none}"; fi
-    while true; do read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.icloud.com${none}): ")" vless_domain || true; [[ -z "$vless_domain" ]] && vless_domain="www.icloud.com"; if is_valid_domain "$vless_domain"; then break; else error "域名格式无效"; fi; done
+    while true; do read -p "$(echo -e " -> 请输入 VLESS SNI域名 (默认: ${cyan}www.microsoft.com${none}): ")" vless_domain || true; [[ -z "$vless_domain" ]] && vless_domain="www.microsoft.com"; if is_valid_domain "$vless_domain"; then break; else error "域名格式无效"; fi; done
     read -p "$(echo -e " -> 请输入 VLESS uTLS 指纹 (默认: ${cyan}chrome${none}): ")" vless_fp || true; [[ -z "$vless_fp" ]] && vless_fp="chrome"
     read -p "$(echo -e " -> 请输入 VLESS Reality spiderX 路径 (默认: ${cyan}/${none}): ")" vless_spx || true; [[ -z "$vless_spx" ]] && vless_spx="/"
     run_install_dual "$vless_port" "$vless_uuid" "$vless_domain" "$ss_port" "$ss_password" "$vless_fp" "$vless_spx"
@@ -392,7 +396,7 @@ run_install_dual() {
 main_menu() {
     while true; do
         draw_menu_header
-        printf "  ${green}%-2s${none} %-35s\n" "1." "安装 Xray"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "安装 Xray (全新/覆盖)"
         printf "  ${cyan}%-2s${none} %-35s\n" "2." "更新 Xray"
         printf "  ${red}%-2s${none} %-35s\n" "3." "卸载 Xray"
         draw_divider
