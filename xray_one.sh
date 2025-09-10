@@ -10,10 +10,9 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 2.2 - [UNIVERSAL COMPATIBILITY FIX] Replaced advanced globbing
-#                      in the 'case' statement with a 'tr' to lowercase and
-#                      simpler patterns. This resolves the syntax error on strict
-#                      POSIX shells (sh, dash) and ensures maximum compatibility.
+#      REVISION: 2.3 - [VLESS FIX] Added 'flow=xtls-rprx-vision' parameter to the
+#                      generated VLESS link to match the server-side configuration.
+#                      This resolves the 'client flow is empty' connection error.
 #
 #====================================================================================
 
@@ -62,7 +61,7 @@ load_lang_en() {
     export UNINSTALL_CANCELLED="Uninstall operation canceled."
     export SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v2.2 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v2.3 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
     export MENU_OPTION_2="View Node Information"
     export MENU_OPTION_3="Restart Xray Service"
@@ -108,7 +107,7 @@ load_lang_zh() {
     export UNINSTALL_CANCELLED="卸载操作已取消。"
     export SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.2 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.3 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
     export MENU_OPTION_2="查看节点信息"
     export MENU_OPTION_3="重启 Xray 服务"
@@ -194,15 +193,12 @@ configure_and_generate_links() {
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
 
-    # --- CRITICAL FIX v2.2 ---
-    # Use a 'while read' loop with 'tr' to lowercase for maximum portability.
     PRIVATE_KEY=""
     PUBLIC_KEY=""
     while IFS= read -r line; do
         lower_line=$(echo "$line" | tr '[:upper:]' '[:lower:]')
         case "$lower_line" in
             *private*key:*)
-                # Extract from the original line to preserve case in the key
                 PRIVATE_KEY=$(echo "$line" | cut -d':' -f2- | xargs)
                 ;;
             *public*key:*)
@@ -266,7 +262,11 @@ view_links() {
     source "$NODE_INFO_FILE"
     VLESS_REMARK_ENCODED=$(url_encode "${HOSTNAME}")
     SS_REMARK_ENCODED=$(url_encode "${HOSTNAME}-SS")
-    VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
+    
+    # --- VLESS FIX v2.3 ---
+    # Added the required 'flow' parameter to the VLESS link.
+    VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&fp=${FINGERPRINT}&flow=xtls-rprx-vision&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
+    
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
 
