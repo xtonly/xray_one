@@ -10,9 +10,9 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 2.3 - [VLESS FIX] Added 'flow=xtls-rprx-vision' parameter to the
-#                      generated VLESS link to match the server-side configuration.
-#                      This resolves the 'client flow is empty' connection error.
+#      REVISION: 2.4 - [FEATURE] VLESS flow control ('xtls-rprx-vision') is now
+#                      optional via a user prompt.
+#                      [FEATURE] SNI prompt now defaults to 'www.icloud.com'.
 #
 #====================================================================================
 
@@ -43,8 +43,8 @@ load_lang_en() {
     export CONFIGURING_XRAY=">>> Configuring Xray and generating nodes..."
     export PROMPT_VLESS_PORT="Enter VLESS service port (default 443): "
     export PROMPT_SS_PORT="Enter Shadowsocks service port (default 8443): "
-    export PROMPT_SNI="Enter a real, accessible destination domain (e.g., www.microsoft.com): "
-    export ERROR_SNI_EMPTY="Destination domain cannot be empty!"
+    export PROMPT_SNI="Enter a destination domain (default: www.icloud.com): "
+    export PROMPT_FLOW_CONTROL="Enable VLESS flow control (xtls-rprx-vision)? (Y/n): "
     export PROMPT_SNIFFING="Enable sniffing for client-side traffic diversion? (y/N): "
     export ERROR_KEY_GENERATION_FAILED="Error: Failed to generate REALITY key pair! Please run 'xray x25519' manually to check for errors."
     export WRITING_CONFIG="Writing server configuration file..."
@@ -61,7 +61,7 @@ load_lang_en() {
     export UNINSTALL_CANCELLED="Uninstall operation canceled."
     export SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v2.3 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v2.4 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
     export MENU_OPTION_2="View Node Information"
     export MENU_OPTION_3="Restart Xray Service"
@@ -89,8 +89,8 @@ load_lang_zh() {
     export CONFIGURING_XRAY=">>> 正在为您配置 Xray 并生成节点..."
     export PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 443): "
     export PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 8443): "
-    export PROMPT_SNI="请输入一个真实的、可访问的目标网站域名 (例如 www.microsoft.com): "
-    export ERROR_SNI_EMPTY="目标网站域名不能为空！"
+    export PROMPT_SNI="请输入一个目标网站域名 (默认为 www.icloud.com): "
+    export PROMPT_FLOW_CONTROL="是否启用 VLESS 流控 (xtls-rprx-vision)？(Y/n): "
     export PROMPT_SNIFFING="是否为客户端开启流量嗅探(sniffing)功能？(y/N): "
     export ERROR_KEY_GENERATION_FAILED="错误：生成 REALITY 密钥对失败！请手动运行 'xray x25519' 查看报错。"
     export WRITING_CONFIG="正在写入服务器配置文件..."
@@ -107,7 +107,7 @@ load_lang_zh() {
     export UNINSTALL_CANCELLED="卸载操作已取消。"
     export SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.3 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.4 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
     export MENU_OPTION_2="查看节点信息"
     export MENU_OPTION_3="重启 Xray 服务"
@@ -185,8 +185,8 @@ configure_and_generate_links() {
     color_echo BLUE "$CONFIGURING_XRAY"
     read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-443}
     read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-8443}
-    read -rp "$PROMPT_SNI" SNI
-    if [ -z "$SNI" ]; then color_echo RED "$ERROR_SNI_EMPTY"; return 1; fi
+    read -rp "$PROMPT_SNI" SNI; SNI=${SNI:-www.icloud.com}
+    read -rp "$PROMPT_FLOW_CONTROL" FLOW_CHOICE
     read -rp "$PROMPT_SNIFFING" SNIFFING_CHOICE
     [[ "${SNIFFING_CHOICE,,}" == "y" ]] && SNIFFING_ENABLED="true" || SNIFFING_ENABLED="false"
 
@@ -213,10 +213,18 @@ configure_and_generate_links() {
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         color_echo RED "$ERROR_KEY_GENERATION_FAILED"
-        echo "--- Debug Info: Output of 'xray x25519' ---"
-        echo "$KEY_PAIR"
-        echo "---------------------------------------------"
+        echo "--- Debug Info: Output of 'xray x25519' ---"; echo "$KEY_PAIR"; echo "---------------------------------------------"
         return 1
+    fi
+
+    local CLIENTS_JSON
+    local VLESS_FLOW
+    if [[ "${FLOW_CHOICE,,}" != "n" ]]; then
+        CLIENTS_JSON='{ "id": "'${UUID}'", "flow": "xtls-rprx-vision" }'
+        VLESS_FLOW="xtls-rprx-vision"
+    else
+        CLIENTS_JSON='{ "id": "'${UUID}'" }'
+        VLESS_FLOW=""
     fi
 
     SHORT_ID=$(openssl rand -hex 8)
@@ -229,7 +237,7 @@ configure_and_generate_links() {
 {
   "log": { "loglevel": "warning" }, "inbounds": [
     { "listen": "0.0.0.0", "port": ${VLESS_PORT}, "protocol": "vless",
-      "settings": { "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
+      "settings": { "clients": [ ${CLIENTS_JSON} ], "decryption": "none" },
       "streamSettings": { "network": "tcp", "security": "reality",
         "realitySettings": { "show": false, "dest": "${SNI}:443", "xver": 0, "serverNames": [ "${SNI}" ], "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ] }
       }, "sniffing": { "enabled": ${SNIFFING_ENABLED}, "destOverride": ["http", "tls"] }
@@ -244,7 +252,18 @@ EOF
     get_public_ip
     SERVER_HOSTNAME=$(hostname)
     cat > "$NODE_INFO_FILE" <<EOF
-VLESS_PORT="${VLESS_PORT}"; SS_PORT="${SS_PORT}"; UUID="${UUID}"; PUBLIC_KEY="${PUBLIC_KEY}"; SHORT_ID="${SHORT_ID}"; SNI="${SNI}"; FINGERPRINT="${FINGERPRINT}"; SS_METHOD="${SS_METHOD}"; SS_PASSWORD="${SS_PASSWORD}"; SERVER_IP="${PUBLIC_IP}"; HOSTNAME="${SERVER_HOSTNAME}"
+VLESS_PORT="${VLESS_PORT}"
+SS_PORT="${SS_PORT}"
+UUID="${UUID}"
+PUBLIC_KEY="${PUBLIC_KEY}"
+SHORT_ID="${SHORT_ID}"
+SNI="${SNI}"
+FINGERPRINT="${FINGERPRINT}"
+SS_METHOD="${SS_METHOD}"
+SS_PASSWORD="${SS_PASSWORD}"
+SERVER_IP="${PUBLIC_IP}"
+HOSTNAME="${SERVER_HOSTNAME}"
+VLESS_FLOW="${VLESS_FLOW}"
 EOF
 
     color_echo GREEN "$SUCCESS_CONFIG_WRITTEN"
@@ -260,13 +279,15 @@ EOF
 view_links() {
     if [ ! -f "$NODE_INFO_FILE" ]; then color_echo RED "$ERROR_NODE_FILE_NOT_FOUND"; return; fi
     source "$NODE_INFO_FILE"
+    
+    local FLOW_LINK_PARAM=""
+    if [[ -n "$VLESS_FLOW" ]]; then
+        FLOW_LINK_PARAM="&flow=${VLESS_FLOW}"
+    fi
+
     VLESS_REMARK_ENCODED=$(url_encode "${HOSTNAME}")
     SS_REMARK_ENCODED=$(url_encode "${HOSTNAME}-SS")
-    
-    # --- VLESS FIX v2.3 ---
-    # Added the required 'flow' parameter to the VLESS link.
-    VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&fp=${FINGERPRINT}&flow=xtls-rprx-vision&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
-    
+    VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&fp=${FINGERPRINT}${FLOW_LINK_PARAM}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
 
