@@ -10,11 +10,10 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 1.9 - [CRITICAL FIX] Re-implemented a more robust method for
-#                      parsing REALITY keys from 'xray x25519' output. This fixes
-#                      the key generation failure error by using a case-insensitive
-#                      grep and splitting by colon, making it resilient to minor
-#                      format changes in future Xray versions.
+#      REVISION: 2.0 - [FINAL FIX] Enhanced key parsing to recognize both
+#                      'Public key:' and 'Password:' as valid labels for the
+#                      public key. This resolves the key generation failure on
+#                      Xray versions that use the 'Password:' label in their output.
 #
 #====================================================================================
 
@@ -63,7 +62,7 @@ load_lang_en() {
     export UNINSTALL_CANCELLED="Uninstall operation canceled."
     export SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v1.9 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v2.0 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
     export MENU_OPTION_2="View Node Information"
     export MENU_OPTION_3="Restart Xray Service"
@@ -109,7 +108,7 @@ load_lang_zh() {
     export UNINSTALL_CANCELLED="卸载操作已取消。"
     export SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v1.9 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.0 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
     export MENU_OPTION_2="查看节点信息"
     export MENU_OPTION_3="重启 Xray 服务"
@@ -195,14 +194,13 @@ configure_and_generate_links() {
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
     
-    # --- CRITICAL FIX v1.9 ---
-    # Using a more robust method to parse keys, resistant to format changes.
+    # --- CRITICAL FIX v2.0 ---
+    # Use a regex to find either 'Public key' or 'Password' as the label.
     PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -i 'private key' | cut -d':' -f2 | xargs)
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i 'public key' | cut -d':' -f2 | xargs)
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i -E '(public key|password)' | cut -d':' -f2 | xargs)
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         color_echo RED "$ERROR_KEY_GENERATION_FAILED"
-        # For debugging, show what was actually captured.
         echo "--- Debug Info: Output of 'xray x25519' ---"
         echo "$KEY_PAIR"
         echo "---------------------------------------------"
