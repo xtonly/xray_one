@@ -1,15 +1,18 @@
 #!/bin/bash
 
 # =================================================================
-# VLESS+REALITY & Shadowsocks (SS2022) 配置生成脚本 (v2 - 已修正)
+# VLESS+REALITY & Shadowsocks (SS2022) 配置生成脚本 (v3 - 最终修正版)
 #
 # 该脚本会生成可直接导入客户端的分享链接。
 # VLESS 节点备注为服务器的 hostname。
 # Shadowsocks 节点备注为服务器的 hostname-SS。
 #
+# v3 更新日志:
+# - 修正了服务器地址问题。脚本现在会自动检测并使用公网 IP 地址，
+#   而不是使用本地 hostname 作为节点服务器地址。
+#
 # v2 更新日志:
 # - 修正了 Shadowsocks (SS2022) URI 格式问题。
-#   根据 SIP002 标准，对 method:password 部分进行 Base64 编码。
 # =================================================================
 
 # --- 函数定义 ---
@@ -34,40 +37,57 @@ print_color() {
 
 # 检查依赖
 check_deps() {
-    if ! command -v xray &> /dev/null; then
-        print_color "yellow" "警告: 未检测到 xray。将使用 'openssl' 生成密钥，这可能不适用于所有 xray 版本。"
-        if ! command -v openssl &> /dev/null; then
-            print_color "red" "错误: 'openssl' 也未安装。请先安装 'openssl' 或 'xray'。"
+    for cmd in curl openssl base64; do
+        if ! command -v $cmd &> /dev/null; then
+            print_color "red" "错误: 命令 '$cmd' 未找到。请先安装它。"
             exit 1
         fi
-    fi
-    if ! command -v base64 &> /dev/null; then
-        print_color "red" "错误: 'base64' 命令未找到，无法继续。请安装 coreutils。"
-        exit 1
+    done
+    if ! command -v xray &> /dev/null; then
+        print_color "yellow" "警告: 未检测到 xray。将使用 'openssl' 生成密钥，这可能不适用于所有 xray 版本。"
     fi
 }
+
+# 获取公网 IP 地址
+get_public_ip() {
+    print_color "yellow" "正在检测服务器公网 IP 地址..."
+    PUBLIC_IP=$(curl -s https://ip.sb)
+    if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP=$(curl -s https://ifconfig.me)
+    fi
+    if [ -z "$PUBLIC_IP" ]; then
+        print_color "red" "错误: 无法检测到公网 IP 地址。请检查网络连接。"
+        exit 1
+    fi
+    print_color "green" "服务器公网 IP: $PUBLIC_IP"
+}
+
 
 # --- 主逻辑开始 ---
 
 clear
 print_color "green" "============================================================"
-print_color "green" "    VLESS+REALITY 和 Shadowsocks (SS2022) 配置生成器 (v2)   "
+print_color "green" "  VLESS+REALITY 和 Shadowsocks (SS2022) 配置生成器 (v3) "
 print_color "green" "============================================================"
 echo
 
 # 检查依赖
 check_deps
 
+# --- 获取服务器信息 ---
+# 【修正部分】获取公网 IP
+get_public_ip
+SERVER_ADDR="$PUBLIC_IP"
+SERVER_HOSTNAME=$(hostname)
+if [ -z "$SERVER_HOSTNAME" ]; then
+    SERVER_HOSTNAME="MyServer" # 如果获取不到 hostname, 使用默认值
+fi
+
+echo
+
 # --- VLESS + REALITY 配置 ---
 
 print_color "yellow" "--- 正在生成 VLESS + REALITY 配置 ---"
-
-# 获取服务器 IP 或主机名 (优先使用 hostname)
-SERVER_HOST=$(hostname)
-if [ -z "$SERVER_HOST" ]; then
-    print_color "red" "无法获取服务器主机名，请检查您的系统配置。"
-    exit 1
-fi
 
 # 生成 UUID
 UUID=$(cat /proc/sys/kernel/random/uuid)
@@ -97,7 +117,8 @@ if [ -z "$SNI" ]; then
 fi
 
 # 组装 VLESS 链接
-VLESS_LINK="vless://${UUID}@${SERVER_HOST}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${SERVER_HOST}"
+VLESS_REMARK="$SERVER_HOSTNAME"
+VLESS_LINK="vless://${UUID}@${SERVER_ADDR}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK}"
 
 echo
 print_color "green" "✅ VLESS + REALITY 配置已生成！"
@@ -121,12 +142,10 @@ case $SS_METHOD_CHOICE in
         ;;
 esac
 
-# 根据加密方法生成相应长度的密码 (已经是 Base64 编码)
+# 根据加密方法生成相应长度的密码
 if [[ "$SS_METHOD" == "2022-blake3-aes-128-gcm" ]]; then
-    # 16 bytes, base64 encoded
     SS_PASSWORD=$(openssl rand -base64 16)
 else
-    # 32 bytes, base64 encoded
     SS_PASSWORD=$(openssl rand -base64 32)
 fi
 
@@ -134,15 +153,13 @@ fi
 read -p "请输入 Shadowsocks 服务的端口 (默认 8443): " SS_PORT
 SS_PORT=${SS_PORT:-8443}
 
-# 【修正部分】将 method:password 进行 Base64 编码
-# echo -n 表示不输出末尾的换行符
-# base64 -w 0 表示不进行自动换行
+# 将 method:password 进行 Base64 编码
 USER_INFO_RAW="${SS_METHOD}:${SS_PASSWORD}"
 USER_INFO_B64=$(echo -n "$USER_INFO_RAW" | base64 -w 0)
 
 # 组装 SS2022 链接
-SS_REMARK="${SERVER_HOST}-SS"
-SS_LINK="ss://${USER_INFO_B64}@${SERVER_HOST}:${SS_PORT}#${SS_REMARK}"
+SS_REMARK="${SERVER_HOSTNAME}-SS"
+SS_LINK="ss://${USER_INFO_B64}@${SERVER_ADDR}:${SS_PORT}#${SS_REMARK}"
 
 echo
 print_color "green" "✅ Shadowsocks (SS2022) 配置已生成！"
@@ -150,7 +167,7 @@ echo
 
 # --- 显示结果 ---
 
-print_color "green" "======================= 配置信息 (修正版) ======================="
+print_color "green" "======================= 配置信息 (最终修正版) ======================="
 echo
 print_color "yellow" "[VLESS + REALITY 节点链接]"
 echo "${VLESS_LINK}"
@@ -158,7 +175,7 @@ echo
 print_color "yellow" "[Shadowsocks (SS2022) 节点链接]"
 echo "${SS_LINK}"
 echo
-print_color "green" "================================================================"
+print_color "green" "===================================================================="
 print_color "green" "将以上链接直接复制到您的客户端中即可使用。"
 echo
 print_color "yellow" "注意：此脚本仅生成配置信息，您仍需在服务器上正确部署并运行相应的服务 (如 Xray) 以使节点生效。"
