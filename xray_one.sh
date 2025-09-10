@@ -1,18 +1,17 @@
 #!/bin/bash
 
 # =================================================================
-# VLESS+REALITY & Shadowsocks (SS2022) 配置生成脚本 (v3 - 最终修正版)
+# VLESS+REALITY & Shadowsocks (SS2022) 配置生成脚本 (v4 - 健壮版)
 #
 # 该脚本会生成可直接导入客户端的分享链接。
 # VLESS 节点备注为服务器的 hostname。
 # Shadowsocks 节点备注为服务器的 hostname-SS。
 #
-# v3 更新日志:
-# - 修正了服务器地址问题。脚本现在会自动检测并使用公网 IP 地址，
-#   而不是使用本地 hostname 作为节点服务器地址。
-#
-# v2 更新日志:
-# - 修正了 Shadowsocks (SS2022) URI 格式问题。
+# v4 更新日志:
+# - 大幅增强公网 IP 检测的稳定性。
+# - 轮询多个 IP 查询服务 (ipinfo.io, api.ipify.org, etc.)。
+# - 对检测结果进行有效性验证，过滤掉 HTML 错误页面等无效内容。
+# - 增加手动输入 IP 地址的 fallback 机制，确保脚本可用性。
 # =================================================================
 
 # --- 函数定义 ---
@@ -44,20 +43,42 @@ check_deps() {
         fi
     done
     if ! command -v xray &> /dev/null; then
-        print_color "yellow" "警告: 未检测到 xray。将使用 'openssl' 生成密钥，这可能不适用于所有 xray 版本。"
+        print_color "yellow" "警告: 未检测到 xray。将使用 'openssl' 生成密钥。"
     fi
 }
 
-# 获取公网 IP 地址
+# 获取公网 IP 地址 (v4 增强版)
 get_public_ip() {
     print_color "yellow" "正在检测服务器公网 IP 地址..."
-    PUBLIC_IP=$(curl -s https://ip.sb)
+    # 定义多个 IP 查询服务
+    IP_SERVICES=(
+        "https://ipinfo.io/ip"
+        "https://api.ipify.org"
+        "https://icanhazip.com"
+        "https://checkip.amazonaws.com"
+        "https://ifconfig.me"
+        "https://ip.sb"
+    )
+    
+    PUBLIC_IP=""
+    for service in "${IP_SERVICES[@]}"; do
+        # 使用 curl 获取 IP，设置5秒超时，并模拟浏览器 User-Agent
+        IP_CANDIDATE=$(curl -s -A "Mozilla/5.0" --connect-timeout 5 "$service")
+        # 验证获取的是否为合法的 IP 地址格式
+        if [[ "$IP_CANDIDATE" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            PUBLIC_IP=$IP_CANDIDATE
+            break
+        fi
+    done
+
+    # 如果自动检测失败，则请求用户手动输入
     if [ -z "$PUBLIC_IP" ]; then
-        PUBLIC_IP=$(curl -s https://ifconfig.me)
-    fi
-    if [ -z "$PUBLIC_IP" ]; then
-        print_color "red" "错误: 无法检测到公网 IP 地址。请检查网络连接。"
-        exit 1
+        print_color "red" "自动检测公网 IP 失败。"
+        read -p "请输入您的服务器公网 IP 地址: " PUBLIC_IP
+        if [[ ! "$PUBLIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            print_color "red" "输入的 IP 地址格式不正确！"
+            exit 1
+        fi
     fi
     print_color "green" "服务器公网 IP: $PUBLIC_IP"
 }
@@ -67,7 +88,7 @@ get_public_ip() {
 
 clear
 print_color "green" "============================================================"
-print_color "green" "  VLESS+REALITY 和 Shadowsocks (SS2022) 配置生成器 (v3) "
+print_color "green" "  VLESS+REALITY 和 Shadowsocks (SS2022) 配置生成器 (v4) "
 print_color "green" "============================================================"
 echo
 
@@ -75,7 +96,6 @@ echo
 check_deps
 
 # --- 获取服务器信息 ---
-# 【修正部分】获取公网 IP
 get_public_ip
 SERVER_ADDR="$PUBLIC_IP"
 SERVER_HOSTNAME=$(hostname)
@@ -89,24 +109,17 @@ echo
 
 print_color "yellow" "--- 正在生成 VLESS + REALITY 配置 ---"
 
-# 生成 UUID
 UUID=$(cat /proc/sys/kernel/random/uuid)
 
-# 生成 X25519 密钥对
 if command -v xray &> /dev/null; then
     KEY_PAIR=$(xray x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep 'Private key' | awk '{print $3}')
     PUBLIC_KEY=$(echo "$KEY_PAIR" | grep 'Public key' | awk '{print $3}')
 else
-    # Fallback to openssl if xray is not installed
-    PRIVATE_KEY=$(openssl genpkey -algorithm x25519 | openssl pkey -print_priv -outform DER | base64 -w 0)
     PUBLIC_KEY=$(openssl genpkey -algorithm x25519 -pubout -outform DER | base64 -w 0)
 fi
 
-# 生成 Short ID
 SHORT_ID=$(openssl rand -hex 8)
 
-# 提示用户输入端口和目标网站
 read -p "请输入 VLESS 服务的端口 (默认 443): " VLESS_PORT
 VLESS_PORT=${VLESS_PORT:-443}
 
@@ -116,7 +129,6 @@ if [ -z "$SNI" ]; then
     exit 1
 fi
 
-# 组装 VLESS 链接
 VLESS_REMARK="$SERVER_HOSTNAME"
 VLESS_LINK="vless://${UUID}@${SERVER_ADDR}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK}"
 
@@ -128,7 +140,6 @@ echo
 
 print_color "yellow" "--- 正在生成 Shadowsocks (SS2022) 配置 ---"
 
-# 选择加密方法
 echo "请选择 SS2022 加密方法:"
 echo "1) 2022-blake3-aes-128-gcm (推荐)"
 echo "2) 2022-blake3-aes-256-gcm"
@@ -142,22 +153,18 @@ case $SS_METHOD_CHOICE in
         ;;
 esac
 
-# 根据加密方法生成相应长度的密码
 if [[ "$SS_METHOD" == "2022-blake3-aes-128-gcm" ]]; then
     SS_PASSWORD=$(openssl rand -base64 16)
 else
     SS_PASSWORD=$(openssl rand -base64 32)
 fi
 
-# 提示用户输入端口
 read -p "请输入 Shadowsocks 服务的端口 (默认 8443): " SS_PORT
 SS_PORT=${SS_PORT:-8443}
 
-# 将 method:password 进行 Base64 编码
 USER_INFO_RAW="${SS_METHOD}:${SS_PASSWORD}"
 USER_INFO_B64=$(echo -n "$USER_INFO_RAW" | base64 -w 0)
 
-# 组装 SS2022 链接
 SS_REMARK="${SERVER_HOSTNAME}-SS"
 SS_LINK="ss://${USER_INFO_B64}@${SERVER_ADDR}:${SS_PORT}#${SS_REMARK}"
 
@@ -167,7 +174,7 @@ echo
 
 # --- 显示结果 ---
 
-print_color "green" "======================= 配置信息 (最终修正版) ======================="
+print_color "green" "========================= 配置信息 (v4) ========================="
 echo
 print_color "yellow" "[VLESS + REALITY 节点链接]"
 echo "${VLESS_LINK}"
