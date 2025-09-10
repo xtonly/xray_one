@@ -54,6 +54,13 @@ VLESS + REALITY: 目前最受推荐的高级伪装方案，安全、高效且不
 Shadowsocks-2022: 新一代的 Shadowsocks AEAD 加密协议，性能优越。
 
 
+内核文件来自开源项目：
+--
+Xray-core
+-
+https://github.com/XTLS/Xray-core
+
+
 
 
 
