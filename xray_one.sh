@@ -10,7 +10,9 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 2.6 - [FEATURE] Added a new menu option to update the Xray core.
+#      REVISION: 2.7 - [UI] Created a 'Service Management' submenu to group update,
+#                      restart, stop, and uninstall options.
+#                      [FEATURE] Added 'Enable/Disable Auto-start' to the main menu.
 #
 #====================================================================================
 
@@ -30,7 +32,7 @@ NODE_INFO_FILE="$XRAY_CONFIG_DIR/node_info.conf"
 
 load_lang_en() {
     export ERROR_MUST_BE_ROOT="Error: This script must be run as root!"
-    export PRESS_ENTER_TO_CONTINUE="Press [Enter] to return to the main menu..."
+    export PRESS_ENTER_TO_CONTINUE="Press [Enter] to return..."
     export DETECTING_IP="Detecting server public IP address..."
     export ERROR_IP_DETECTION_FAILED="Failed to detect public IP. Please check your network or try again later."
     export SERVER_IP_IS="Server Public IP:"
@@ -49,7 +51,7 @@ load_lang_en() {
     export SUCCESS_CONFIG_WRITTEN="Server configuration written successfully!"
     export CONFIGURING_FIREWALL="Configuring firewall..."
     export SUCCESS_XRAY_STARTED="Xray started successfully!"
-    export ERROR_XRAY_START_FAILED="Xray failed to start! Please use menu option 6 to view logs and diagnose the issue."
+    export ERROR_XRAY_START_FAILED="Xray failed to start! Please use menu option to view logs and diagnose the issue."
     export ERROR_NODE_FILE_NOT_FOUND="Node information file not found. Please perform the installation and configuration first."
     export NODE_INFO_HEADER="====================== Your Node Information ======================"
     export VLESS_NODE_LINK="[VLESS + REALITY Node Link]"
@@ -62,26 +64,33 @@ load_lang_en() {
     export RESTARTING_XRAY_AFTER_UPDATE="Restarting Xray service to apply updates..."
     export SUCCESS_XRAY_UPDATED="Xray has been updated and restarted successfully!"
     export ERROR_XRAY_RESTART_AFTER_UPDATE="Xray failed to restart after update. Please check the logs."
+    export XRAY_ENABLED_ON_BOOT="Xray auto-start on boot has been enabled."
+    export XRAY_DISABLED_ON_BOOT="Xray auto-start on boot has been disabled."
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v2.6 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v2.7 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray"
-    export MENU_OPTION_2="Update Xray Core"
-    export MENU_OPTION_3="View Node Information"
-    export MENU_OPTION_4="Restart Xray Service"
-    export MENU_OPTION_5="Stop Xray Service"
-    export MENU_OPTION_6="View Xray Status and Logs"
-    export MENU_OPTION_7="Uninstall Xray"
+    export MENU_OPTION_2="View Node Information"
+    export MENU_OPTION_3="Enable Auto-start on Boot"
+    export MENU_OPTION_4="Disable Auto-start on Boot"
+    export MENU_OPTION_5="View Xray Status and Logs"
+    export MENU_OPTION_6="Service Management"
     export MENU_OPTION_0="Exit Script"
-    export PROMPT_MENU_CHOICE="Please enter an option [0-7]: "
+    export PROMPT_MENU_CHOICE="Please enter an option: "
     export XRAY_SERVICE_RESTARTED="Xray service has been restarted."
     export XRAY_SERVICE_STOPPED="Xray service has been stopped."
     export VIEWING_LOGS="Viewing real-time Xray logs, press Ctrl+C to exit..."
     export ERROR_INVALID_OPTION="Invalid option, please enter a correct number."
+    export SUBMENU_SERVICE_MANAGEMENT_HEADER="--- Service Management Menu ---"
+    export SUBMENU_OPTION_1="Update Xray Core"
+    export SUBMENU_OPTION_2="Restart Xray Service"
+    export SUBMENU_OPTION_3="Stop Xray Service"
+    export SUBMENU_OPTION_4="Uninstall Xray"
+    export SUBMENU_OPTION_0="Return to Main Menu"
 }
 
 load_lang_zh() {
     export ERROR_MUST_BE_ROOT="错误：此脚本必须以 root 身份运行！"
-    export PRESS_ENTER_TO_CONTINUE="按 [Enter] 键返回主菜单..."
+    export PRESS_ENTER_TO_CONTINUE="按 [Enter] 键返回..."
     export DETECTING_IP="正在检测服务器公网 IP 地址..."
     export ERROR_IP_DETECTION_FAILED="自动检测公网 IP 失败。请检查网络或稍后重试。"
     export SERVER_IP_IS="服务器公网 IP:"
@@ -100,7 +109,7 @@ load_lang_zh() {
     export SUCCESS_CONFIG_WRITTEN="服务器配置写入成功！"
     export CONFIGURING_FIREWALL="正在配置防火墙..."
     export SUCCESS_XRAY_STARTED="Xray 已成功启动！"
-    export ERROR_XRAY_START_FAILED="Xray 启动失败！请使用菜单 6 查看日志以定位问题。"
+    export ERROR_XRAY_START_FAILED="Xray 启动失败！请使用菜单选项查看日志以定位问题。"
     export ERROR_NODE_FILE_NOT_FOUND="未找到节点信息文件。请先执行安装与配置。"
     export NODE_INFO_HEADER="====================== 您的节点信息 ======================"
     export VLESS_NODE_LINK="[VLESS + REALITY 节点链接]"
@@ -113,21 +122,28 @@ load_lang_zh() {
     export RESTARTING_XRAY_AFTER_UPDATE="正在重启 Xray 服务以应用更新..."
     export SUCCESS_XRAY_UPDATED="Xray 更新并重启成功！"
     export ERROR_XRAY_RESTART_AFTER_UPDATE="Xray 更新后重启失败，请检查日志。"
+    export XRAY_ENABLED_ON_BOOT="Xray 开机自启已设置。"
+    export XRAY_DISABLED_ON_BOOT="Xray 开机自启已取消。"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.6 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.7 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray"
-    export MENU_OPTION_2="更新 Xray 内核"
-    export MENU_OPTION_3="查看节点信息"
-    export MENU_OPTION_4="重启 Xray 服务"
-    export MENU_OPTION_5="停止 Xray 服务"
-    export MENU_OPTION_6="查看 Xray 状态与日志"
-    export MENU_OPTION_7="卸载 Xray"
+    export MENU_OPTION_2="查看节点信息"
+    export MENU_OPTION_3="设置开机自启"
+    export MENU_OPTION_4="取消开机自启"
+    export MENU_OPTION_5="查看 Xray 状态与日志"
+    export MENU_OPTION_6="服务管理"
     export MENU_OPTION_0="退出脚本"
-    export PROMPT_MENU_CHOICE="请输入选项 [0-7]: "
+    export PROMPT_MENU_CHOICE="请输入选项: "
     export XRAY_SERVICE_RESTARTED="Xray 服务已重启。"
     export XRAY_SERVICE_STOPPED="Xray 服务已停止。"
     export VIEWING_LOGS="正在查看 Xray 实时日志，按 Ctrl+C 退出..."
     export ERROR_INVALID_OPTION="无效选项，请输入正确的数字。"
+    export SUBMENU_SERVICE_MANAGEMENT_HEADER="--- 服务管理菜单 ---"
+    export SUBMENU_OPTION_1="更新 Xray 内核"
+    export SUBMENU_OPTION_2="重启 Xray 服务"
+    export SUBMENU_OPTION_3="停止 Xray 服务"
+    export SUBMENU_OPTION_4="卸载 Xray"
+    export SUBMENU_OPTION_0="返回主菜单"
 }
 
 select_language() {
@@ -327,6 +343,32 @@ uninstall_xray() {
     color_echo GREEN "$SUCCESS_XRAY_UNINSTALLED"
 }
 
+show_service_menu() {
+    while true; do
+        clear
+        color_echo GREEN "$MENU_HEADER_1"
+        color_echo GREEN "       $SUBMENU_SERVICE_MANAGEMENT_HEADER"
+        color_echo GREEN "$MENU_HEADER_1"
+        echo -e "  ${BLUE}1. $SUBMENU_OPTION_1"
+        echo -e "  ${BLUE}2. $SUBMENU_OPTION_2"
+        echo -e "  ${BLUE}3. $SUBMENU_OPTION_3"
+        echo -e "  ${YELLOW}4. $SUBMENU_OPTION_4"
+        echo -e "  ${PLAIN}0. $SUBMENU_OPTION_0"
+        color_echo GREEN "$MENU_HEADER_1"
+        read -rp "$PROMPT_MENU_CHOICE [0-4]: " choice
+
+        case $choice in
+            1) update_xray; pause ;;
+            2) systemctl restart xray; color_echo GREEN "$XRAY_SERVICE_RESTARTED"; sleep 2 ;;
+            3) systemctl stop xray; color_echo GREEN "$XRAY_SERVICE_STOPPED"; sleep 2 ;;
+            4) uninstall_xray; pause ;;
+            0) return ;;
+            *) color_echo RED "$ERROR_INVALID_OPTION"; sleep 2 ;;
+        esac
+    done
+}
+
+
 show_menu() {
     clear
     color_echo GREEN "$MENU_HEADER_1"; color_echo GREEN "$MENU_HEADER_2"; color_echo GREEN "$MENU_HEADER_1"
@@ -335,20 +377,18 @@ show_menu() {
     echo -e "  ${BLUE}3. $MENU_OPTION_3"
     echo -e "  ${BLUE}4. $MENU_OPTION_4"
     echo -e "  ${BLUE}5. $MENU_OPTION_5"
-    echo -e "  ${BLUE}6. $MENU_OPTION_6"
-    echo -e "  ${YELLOW}7. $MENU_OPTION_7"
+    echo -e "  ${YELLOW}6. $MENU_OPTION_6"
     echo -e "  ${PLAIN}0. $MENU_OPTION_0"
     color_echo GREEN "$MENU_HEADER_1"
-    read -rp "$PROMPT_MENU_CHOICE" choice
+    read -rp "$PROMPT_MENU_CHOICE [0-6]: " choice
 
     case $choice in
         1) configure_and_generate_links; pause ;;
-        2) update_xray; pause ;;
-        3) view_links; pause ;;
-        4) systemctl restart xray; color_echo GREEN "$XRAY_SERVICE_RESTARTED"; sleep 2 ;;
-        5) systemctl stop xray; color_echo GREEN "$XRAY_SERVICE_STOPPED"; sleep 2 ;;
-        6) color_echo YELLOW "$VIEWING_LOGS"; journalctl -u xray -f --no-pager; pause ;;
-        7) uninstall_xray; pause ;;
+        2) view_links; pause ;;
+        3) systemctl enable xray >/dev/null 2>&1; color_echo GREEN "$XRAY_ENABLED_ON_BOOT"; sleep 2 ;;
+        4) systemctl disable xray >/dev/null 2>&1; color_echo GREEN "$XRAY_DISABLED_ON_BOOT"; sleep 2 ;;
+        5) color_echo YELLOW "$VIEWING_LOGS"; journalctl -u xray -f --no-pager; pause ;;
+        6) show_service_menu ;;
         0) exit 0 ;;
         *) color_echo RED "$ERROR_INVALID_OPTION"; sleep 2 ;;
     esac
