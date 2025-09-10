@@ -9,8 +9,9 @@
 #   DESCRIPTION: 一个集安装、配置、管理和卸载于一体的 Xray 全功能脚本。
 #                支持 VLESS+REALITY 和 Shadowsocks-2022。
 #
-#      REVISION: 1.2 - [关键修复] 增加了对密钥生成的有效性检查，
-#                      防止因密钥生成失败导致配置文件错误和服务启动失败。
+#      REVISION: 1.3 - [最终修复] 增强了密钥解析的兼容性，能同时处理
+#                      新版 (PrivateKey/Password) 和旧版 (Private key/Public key)
+#                      的 xray x25519 输出格式。
 #
 #====================================================================================
 
@@ -121,10 +122,11 @@ configure_and_generate_links() {
     # 2. 生成所需参数
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep 'Private key' | awk '{print $3}')
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep 'Public key' | awk '{print $3}')
     
-    # 【v1.2 关键修复】检查密钥是否生成成功
+    # 【v1.3 关键修复】兼容新旧两种密钥格式
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -i "private" | cut -d':' -f2 | xargs)
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i "public\|password" | cut -d':' -f2 | xargs)
+
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         color_echo RED "错误：生成 REALITY 密钥对失败！"
         color_echo RED "请检查 Xray 是否能正常运行。您可以尝试手动运行 'xray x25519' 命令查看报错。"
@@ -296,7 +298,7 @@ uninstall_xray() {
 show_menu() {
     clear
     color_echo GREEN "=========================================================="
-    color_echo GREEN "          Xray 全功能管理脚本 v1.2 (VLESS/SS)"
+    color_echo GREEN "          Xray 全功能管理脚本 v1.3 (VLESS/SS)"
     color_echo GREEN "=========================================================="
     color_echo BLUE "  1. 安装并配置 Xray (首次/重新配置请选此项)"
     color_echo BLUE "  2. 查看节点信息"
