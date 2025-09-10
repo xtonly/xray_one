@@ -9,7 +9,8 @@
 #   DESCRIPTION: 一个集安装、配置、管理和卸载于一体的 Xray 全功能脚本。
 #                支持 VLESS+REALITY 和 Shadowsocks-2022。
 #
-#      REVISION: 1.1 - 修复了SS节点别名在某些客户端下为空的问题 (URL编码)
+#      REVISION: 1.2 - [关键修复] 增加了对密钥生成的有效性检查，
+#                      防止因密钥生成失败导致配置文件错误和服务启动失败。
 #
 #====================================================================================
 
@@ -45,7 +46,7 @@ pause() {
     read -rp "按 [Enter] 键返回主菜单..."
 }
 
-# URL编码函数 (修复别名问题)
+# URL编码函数
 url_encode() {
     local string="$1"
     local encoded=""
@@ -59,7 +60,6 @@ url_encode() {
     done
     echo "$encoded"
 }
-
 
 # 获取公网 IP 地址
 get_public_ip() {
@@ -93,8 +93,8 @@ install_xray() {
         color_echo GREEN "Xray 已安装。将执行更新操作。"
     fi
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    if [ $? -ne 0 ]; then
-        color_echo RED "Xray 安装失败！请检查错误信息。"
+    if ! command -v xray &>/dev/null; then
+        color_echo RED "Xray 安装失败或未在 PATH 中找到！请检查安装日志。"
         exit 1
     fi
     systemctl enable xray
@@ -123,6 +123,14 @@ configure_and_generate_links() {
     KEY_PAIR=$(xray x25519)
     PRIVATE_KEY=$(echo "$KEY_PAIR" | grep 'Private key' | awk '{print $3}')
     PUBLIC_KEY=$(echo "$KEY_PAIR" | grep 'Public key' | awk '{print $3}')
+    
+    # 【v1.2 关键修复】检查密钥是否生成成功
+    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
+        color_echo RED "错误：生成 REALITY 密钥对失败！"
+        color_echo RED "请检查 Xray 是否能正常运行。您可以尝试手动运行 'xray x25519' 命令查看报错。"
+        return 1
+    fi
+    
     SHORT_ID=$(openssl rand -hex 8)
     SS_METHOD="2022-blake3-aes-128-gcm"
     SS_PASSWORD=$(openssl rand -base64 16)
@@ -210,13 +218,12 @@ EOF
     # 5. 开放防火墙
     color_echo YELLOW "正在配置防火墙..."
     if command -v ufw &>/dev/null; then
-        ufw allow ${VLESS_PORT}/tcp
-        ufw allow ${SS_PORT}/tcp
-        ufw reload
+        ufw allow ${VLESS_PORT}/tcp >/dev/null 2>&1
+        ufw allow ${SS_PORT}/tcp >/dev/null 2>&1
     elif command -v firewall-cmd &>/dev/null; then
-        firewall-cmd --zone=public --add-port=${VLESS_PORT}/tcp --permanent
-        firewall-cmd --zone=public --add-port=${SS_PORT}/tcp --permanent
-        firewall-cmd --reload
+        firewall-cmd --zone=public --add-port=${VLESS_PORT}/tcp --permanent >/dev/null 2>&1
+        firewall-cmd --zone=public --add-port=${SS_PORT}/tcp --permanent >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
     else
         color_echo YELLOW "未检测到 ufw 或 firewalld，请手动开放端口 ${VLESS_PORT} 和 ${SS_PORT}！"
     fi
@@ -226,7 +233,7 @@ EOF
     if systemctl is-active --quiet xray; then
         color_echo GREEN "Xray 已成功启动！"
     else
-        color_echo RED "Xray 启动失败！请使用 'systemctl status xray' 查看日志。"
+        color_echo RED "Xray 启动失败！请使用菜单 5 查看日志以定位问题。"
         return 1
     fi
     
@@ -240,7 +247,6 @@ view_links() {
         return
     fi
     
-    # 从文件中读取信息
     VLESS_PORT=$(grep "vless_port" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
     SS_PORT=$(grep "ss_port" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
     UUID=$(grep "uuid" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
@@ -252,14 +258,11 @@ view_links() {
     SERVER_IP=$(grep "server_ip" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
     HOSTNAME=$(grep "hostname" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
 
-    # 【v1.1 修正】对别名进行 URL 编码
     VLESS_REMARK_ENCODED=$(url_encode "${HOSTNAME}")
     SS_REMARK_ENCODED=$(url_encode "${HOSTNAME}-SS")
 
-    # 生成 VLESS 链接
     VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
     
-    # 生成 Shadowsocks 链接
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
     
@@ -293,7 +296,7 @@ uninstall_xray() {
 show_menu() {
     clear
     color_echo GREEN "=========================================================="
-    color_echo GREEN "          Xray 全功能管理脚本 v1.1 (VLESS/SS)"
+    color_echo GREEN "          Xray 全功能管理脚本 v1.2 (VLESS/SS)"
     color_echo GREEN "=========================================================="
     color_echo BLUE "  1. 安装并配置 Xray (首次/重新配置请选此项)"
     color_echo BLUE "  2. 查看节点信息"
