@@ -10,10 +10,11 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 1.8 - [FINAL FIX] Used 'export' to define language variables,
-#                      forcefully resolving the variable scope issue that caused
-#                      invisible menu text. This ensures variables are globally
-#                      accessible throughout the script's execution.
+#      REVISION: 1.9 - [CRITICAL FIX] Re-implemented a more robust method for
+#                      parsing REALITY keys from 'xray x25519' output. This fixes
+#                      the key generation failure error by using a case-insensitive
+#                      grep and splitting by colon, making it resilient to minor
+#                      format changes in future Xray versions.
 #
 #====================================================================================
 
@@ -37,7 +38,7 @@ load_lang_en() {
     export DETECTING_IP="Detecting server public IP address..."
     export ERROR_IP_DETECTION_FAILED="Failed to detect public IP. Please check your network or try again later."
     export SERVER_IP_IS="Server Public IP:"
-    export INSTALLING_XRAY=">>> Installing Xray..."
+    export INSTALLING_Xray=">>> Installing Xray..."
     export XRAY_ALREADY_INSTALLED="Xray is already installed. An update will be performed."
     export ERROR_XRAY_INSTALL_FAILED="Xray installation failed or not found in PATH! Please check the installation log."
     export SUCCESS_XRAY_INSTALLED="Xray installed/updated successfully!"
@@ -62,7 +63,7 @@ load_lang_en() {
     export UNINSTALL_CANCELLED="Uninstall operation canceled."
     export SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v1.8 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v1.9 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
     export MENU_OPTION_2="View Node Information"
     export MENU_OPTION_3="Restart Xray Service"
@@ -108,7 +109,7 @@ load_lang_zh() {
     export UNINSTALL_CANCELLED="卸载操作已取消。"
     export SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v1.8 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v1.9 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
     export MENU_OPTION_2="查看节点信息"
     export MENU_OPTION_3="重启 Xray 服务"
@@ -193,9 +194,20 @@ configure_and_generate_links() {
 
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep 'Private key' | awk '{print $3}')
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep 'Public key' | awk '{print $3}')
-    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then color_echo RED "$ERROR_KEY_GENERATION_FAILED"; return 1; fi
+    
+    # --- CRITICAL FIX v1.9 ---
+    # Using a more robust method to parse keys, resistant to format changes.
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -i 'private key' | cut -d':' -f2 | xargs)
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i 'public key' | cut -d':' -f2 | xargs)
+
+    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
+        color_echo RED "$ERROR_KEY_GENERATION_FAILED"
+        # For debugging, show what was actually captured.
+        echo "--- Debug Info: Output of 'xray x25519' ---"
+        echo "$KEY_PAIR"
+        echo "---------------------------------------------"
+        return 1
+    fi
 
     SHORT_ID=$(openssl rand -hex 8)
     SS_METHOD="2022-blake3-aes-128-gcm"
