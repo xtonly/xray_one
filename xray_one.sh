@@ -10,11 +10,10 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 2.1 - [ULTRA-ROBUST FIX] Replaced the grep-based key parsing
-#                      with a line-by-line 'while read' loop and a 'case'
-#                      statement. This is the most compatible and robust method
-#                      for parsing command output and should definitively fix the
-#                      key generation failure across all shell environments.
+#      REVISION: 2.2 - [UNIVERSAL COMPATIBILITY FIX] Replaced advanced globbing
+#                      in the 'case' statement with a 'tr' to lowercase and
+#                      simpler patterns. This resolves the syntax error on strict
+#                      POSIX shells (sh, dash) and ensures maximum compatibility.
 #
 #====================================================================================
 
@@ -63,7 +62,7 @@ load_lang_en() {
     export UNINSTALL_CANCELLED="Uninstall operation canceled."
     export SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v2.1 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v2.2 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
     export MENU_OPTION_2="View Node Information"
     export MENU_OPTION_3="Restart Xray Service"
@@ -109,7 +108,7 @@ load_lang_zh() {
     export UNINSTALL_CANCELLED="卸载操作已取消。"
     export SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.1 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.2 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
     export MENU_OPTION_2="查看节点信息"
     export MENU_OPTION_3="重启 Xray 服务"
@@ -194,20 +193,22 @@ configure_and_generate_links() {
 
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
-    
-    # --- CRITICAL FIX v2.1 ---
-    # Use a 'while read' loop for the most robust parsing possible.
+
+    # --- CRITICAL FIX v2.2 ---
+    # Use a 'while read' loop with 'tr' to lowercase for maximum portability.
     PRIVATE_KEY=""
     PUBLIC_KEY=""
     while IFS= read -r line; do
-        case "$line" in
-            *[Pp]rivate[ _][Kk]ey:*)
+        lower_line=$(echo "$line" | tr '[:upper:]' '[:lower:]')
+        case "$lower_line" in
+            *private*key:*)
+                # Extract from the original line to preserve case in the key
                 PRIVATE_KEY=$(echo "$line" | cut -d':' -f2- | xargs)
                 ;;
-            *[Pp]ublic[ _][Kk]ey:*)
+            *public*key:*)
                 PUBLIC_KEY=$(echo "$line" | cut -d':' -f2- | xargs)
                 ;;
-            *[Pp]assword:*)
+            *password:*)
                 PUBLIC_KEY=$(echo "$line" | cut -d':' -f2- | xargs)
                 ;;
         esac
