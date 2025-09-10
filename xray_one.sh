@@ -10,9 +10,8 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 2.4 - [FEATURE] VLESS flow control ('xtls-rprx-vision') is now
-#                      optional via a user prompt.
-#                      [FEATURE] SNI prompt now defaults to 'www.icloud.com'.
+#      REVISION: 2.5 - [CONFIG] Changed default VLESS port to 10443.
+#                      [CONFIG] Changed default Shadowsocks port to 11443.
 #
 #====================================================================================
 
@@ -41,8 +40,8 @@ load_lang_en() {
     export ERROR_XRAY_INSTALL_FAILED="Xray installation failed or not found in PATH! Please check the installation log."
     export SUCCESS_XRAY_INSTALLED="Xray installed/updated successfully!"
     export CONFIGURING_XRAY=">>> Configuring Xray and generating nodes..."
-    export PROMPT_VLESS_PORT="Enter VLESS service port (default 22443): "
-    export PROMPT_SS_PORT="Enter Shadowsocks service port (default 22338): "
+    export PROMPT_VLESS_PORT="Enter VLESS service port (default 10443): "
+    export PROMPT_SS_PORT="Enter Shadowsocks service port (default 11443): "
     export PROMPT_SNI="Enter a destination domain (default: www.icloud.com): "
     export PROMPT_FLOW_CONTROL="Enable VLESS flow control (xtls-rprx-vision)? (Y/n): "
     export PROMPT_SNIFFING="Enable sniffing for client-side traffic diversion? (y/N): "
@@ -61,7 +60,7 @@ load_lang_en() {
     export UNINSTALL_CANCELLED="Uninstall operation canceled."
     export SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
     export MENU_HEADER_1="================================================================="
-    export MENU_HEADER_2="          Xray All-in-One Management Script v2.4 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray All-in-One Management Script v2.5 (VLESS/SS)"
     export MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
     export MENU_OPTION_2="View Node Information"
     export MENU_OPTION_3="Restart Xray Service"
@@ -87,8 +86,8 @@ load_lang_zh() {
     export ERROR_XRAY_INSTALL_FAILED="Xray 安装失败或未在 PATH 中找到！请检查安装日志。"
     export SUCCESS_XRAY_INSTALLED="Xray 安装/更新成功！"
     export CONFIGURING_XRAY=">>> 正在为您配置 Xray 并生成节点..."
-    export PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 22443): "
-    export PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 22338): "
+    export PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 10443): "
+    export PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 11443): "
     export PROMPT_SNI="请输入一个目标网站域名 (默认为 www.icloud.com): "
     export PROMPT_FLOW_CONTROL="是否启用 VLESS 流控 (xtls-rprx-vision)？(Y/n): "
     export PROMPT_SNIFFING="是否为客户端开启流量嗅探(sniffing)功能？(y/N): "
@@ -107,7 +106,7 @@ load_lang_zh() {
     export UNINSTALL_CANCELLED="卸载操作已取消。"
     export SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
     export MENU_HEADER_1="=========================================================="
-    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.4 (VLESS/SS)"
+    export MENU_HEADER_2="          Xray 全功能管理脚本 v2.5 (VLESS/SS)"
     export MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
     export MENU_OPTION_2="查看节点信息"
     export MENU_OPTION_3="重启 Xray 服务"
@@ -183,8 +182,8 @@ install_xray() {
 
 configure_and_generate_links() {
     color_echo BLUE "$CONFIGURING_XRAY"
-    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-22443}
-    read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-22338}
+    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-10443}
+    read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-11443}
     read -rp "$PROMPT_SNI" SNI; SNI=${SNI:-www.icloud.com}
     read -rp "$PROMPT_FLOW_CONTROL" FLOW_CHOICE
     read -rp "$PROMPT_SNIFFING" SNIFFING_CHOICE
@@ -239,7 +238,7 @@ configure_and_generate_links() {
     { "listen": "0.0.0.0", "port": ${VLESS_PORT}, "protocol": "vless",
       "settings": { "clients": [ ${CLIENTS_JSON} ], "decryption": "none" },
       "streamSettings": { "network": "tcp", "security": "reality",
-        "realitySettings": { "show": false, "dest": "${SNI}:22443", "xver": 0, "serverNames": [ "${SNI}" ], "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ] }
+        "realitySettings": { "show": false, "dest": "${SNI}:443", "xver": 0, "serverNames": [ "${SNI}" ], "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ] }
       }, "sniffing": { "enabled": ${SNIFFING_ENABLED}, "destOverride": ["http", "tls"] }
     },
     { "listen": "0.0.0.0", "port": ${SS_PORT}, "protocol": "shadowsocks",
@@ -279,7 +278,7 @@ EOF
 view_links() {
     if [ ! -f "$NODE_INFO_FILE" ]; then color_echo RED "$ERROR_NODE_FILE_NOT_FOUND"; return; fi
     source "$NODE_INFO_FILE"
-    
+
     local FLOW_LINK_PARAM=""
     if [[ -n "$VLESS_FLOW" ]]; then
         FLOW_LINK_PARAM="&flow=${VLESS_FLOW}"
