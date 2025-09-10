@@ -9,14 +9,7 @@
 #   DESCRIPTION: 一个集安装、配置、管理和卸载于一体的 Xray 全功能脚本。
 #                支持 VLESS+REALITY 和 Shadowsocks-2022。
 #
-#       OPTIONS: ---
-#  REQUIREMENTS: ---
-#          BUGS: ---
-#         NOTES: ---
-#        AUTHOR: Gemini
-#  ORGANIZATION:
-#       CREATED: 2025-09-10
-#      REVISION: 1.0
+#      REVISION: 1.1 - 修复了SS节点别名在某些客户端下为空的问题 (URL编码)
 #
 #====================================================================================
 
@@ -51,6 +44,22 @@ check_root() {
 pause() {
     read -rp "按 [Enter] 键返回主菜单..."
 }
+
+# URL编码函数 (修复别名问题)
+url_encode() {
+    local string="$1"
+    local encoded=""
+    local char
+    for (( i=0; i<${#string}; i++ )); do
+        char=${string:i:1}
+        case "$char" in
+            [-_.~a-zA-Z0-9]) encoded+="$char" ;;
+            *) encoded+=$(printf '%%%02X' "'$char") ;;
+        esac
+    done
+    echo "$encoded"
+}
+
 
 # 获取公网 IP 地址
 get_public_ip() {
@@ -243,12 +252,16 @@ view_links() {
     SERVER_IP=$(grep "server_ip" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
     HOSTNAME=$(grep "hostname" "$NODE_INFO_FILE" | awk -F'"' '{print $4}')
 
+    # 【v1.1 修正】对别名进行 URL 编码
+    VLESS_REMARK_ENCODED=$(url_encode "${HOSTNAME}")
+    SS_REMARK_ENCODED=$(url_encode "${HOSTNAME}-SS")
+
     # 生成 VLESS 链接
-    VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${HOSTNAME}"
+    VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
     
     # 生成 Shadowsocks 链接
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
-    SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${HOSTNAME}-SS"
+    SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
     
     color_echo GREEN "====================== 您的节点信息 ======================"
     color_echo YELLOW "[VLESS + REALITY 节点链接]"
@@ -280,13 +293,13 @@ uninstall_xray() {
 show_menu() {
     clear
     color_echo GREEN "=========================================================="
-    color_echo GREEN "              Xray 全功能管理脚本 (VLESS/SS)"
+    color_echo GREEN "          Xray 全功能管理脚本 v1.1 (VLESS/SS)"
     color_echo GREEN "=========================================================="
-    color_echo BLUE "  1. 安装并配置 Xray (首次使用请选此项)"
+    color_echo BLUE "  1. 安装并配置 Xray (首次/重新配置请选此项)"
     color_echo BLUE "  2. 查看节点信息"
     color_echo BLUE "  3. 重启 Xray 服务"
     color_echo BLUE "  4. 停止 Xray 服务"
-    color_echo BLUE "  5. 查看 Xray 状态"
+    color_echo BLUE "  5. 查看 Xray 状态与日志"
     color_echo YELLOW "  6. 卸载 Xray"
     color_echo PLAIN "  0. 退出脚本"
     color_echo GREEN "=========================================================="
@@ -305,15 +318,16 @@ show_menu() {
         3)
             systemctl restart xray
             color_echo GREEN "Xray 服务已重启。"
-            pause
+            sleep 2
             ;;
         4)
             systemctl stop xray
             color_echo GREEN "Xray 服务已停止。"
-            pause
+            sleep 2
             ;;
         5)
-            systemctl status xray
+            color_echo YELLOW "正在查看 Xray 实时日志，按 Ctrl+C 退出..."
+            journalctl -u xray -f --no-pager
             pause
             ;;
         6)
