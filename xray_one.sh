@@ -42,7 +42,7 @@ load_lang_en() {
     export SUCCESS_XRAY_INSTALLED="Xray installed/updated successfully!"
     export CONFIGURING_XRAY=">>> Configuring Xray and generating nodes..."
     export PROMPT_VLESS_PORT="Enter VLESS service port (default 443): "
-    export PROMPT_SS_PORT="Enter Shadowsocks service port (default 8443): "
+    export PROMPT_SS_PORT="Enter Shadowsocks service port (default 22338): "
     export PROMPT_SNI="Enter a destination domain (default: www.icloud.com): "
     export PROMPT_FLOW_CONTROL="Enable VLESS flow control (xtls-rprx-vision)? (Y/n): "
     export PROMPT_SNIFFING="Enable sniffing for client-side traffic diversion? (y/N): "
@@ -88,7 +88,7 @@ load_lang_zh() {
     export SUCCESS_XRAY_INSTALLED="Xray 安装/更新成功！"
     export CONFIGURING_XRAY=">>> 正在为您配置 Xray 并生成节点..."
     export PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 443): "
-    export PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 8443): "
+    export PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 22338): "
     export PROMPT_SNI="请输入一个目标网站域名 (默认为 www.icloud.com): "
     export PROMPT_FLOW_CONTROL="是否启用 VLESS 流控 (xtls-rprx-vision)？(Y/n): "
     export PROMPT_SNIFFING="是否为客户端开启流量嗅探(sniffing)功能？(y/N): "
@@ -184,7 +184,7 @@ install_xray() {
 configure_and_generate_links() {
     color_echo BLUE "$CONFIGURING_XRAY"
     read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-443}
-    read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-8443}
+    read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-22338}
     read -rp "$PROMPT_SNI" SNI; SNI=${SNI:-www.icloud.com}
     read -rp "$PROMPT_FLOW_CONTROL" FLOW_CHOICE
     read -rp "$PROMPT_SNIFFING" SNIFFING_CHOICE
