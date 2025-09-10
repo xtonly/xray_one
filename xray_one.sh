@@ -2,9 +2,10 @@
 
 # ==============================================================================
 # Xray_One 多功能管理脚本
-# 版本: v20250910-1800
+# 版本: v20250910-1830
 # ==============================================================================
 # 更新日志:
+# v20250910-1830: 添加端口占用检查功能，避免端口冲突
 # v20250910-1800: 升级Shadowsocks为SS 2022协议，使用2022-blake3-aes-128-gcm加密
 # v20250905-2310: 最终稳定版. 确认时间同步问题为最终解决方案, 固化所有修复.
 # v3.0: 新增 "切换调试日志模式" 功能, 用于深入排查疑难连接问题.
@@ -16,7 +17,7 @@
 set -e
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="v20250910-1800"
+readonly SCRIPT_VERSION="v20250910-1830"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -68,6 +69,72 @@ get_public_ip() {
             ip=$($cmd "$url" 2>/dev/null) && [[ -n "$ip" ]] && echo "$ip" && return
         done
     done
+}
+
+# --- 端口检查函数 ---
+is_port_available() {
+    local port="$1"
+    if ! command -v ss &>/dev/null; then
+        # 如果没有ss命令，使用netstat检查
+        if command -v netstat &>/dev/null; then
+            if netstat -tuln | grep -q ":$port "; then
+                return 1
+            fi
+        else
+            # 如果netstat也没有，尝试使用lsof
+            if command -v lsof &>/dev/null && lsof -i :$port &>/dev/null; then
+                return 1
+            fi
+        fi
+        return 0
+    fi
+    
+    # 使用ss命令检查端口占用
+    if ss -tuln | grep -q ":$port "; then
+        return 1
+    fi
+    return 0
+}
+
+get_process_using_port() {
+    local port="$1"
+    local process_info=""
+    
+    if command -v lsof &>/dev/null; then
+        process_info=$(lsof -i :$port 2>/dev/null | awk 'NR==2 {print $1}')
+    elif command -v ss &>/dev/null; then
+        process_info=$(ss -tulpn | grep ":$port " | awk '{print $7}' | cut -d'"' -f2 | head -1)
+    elif command -v netstat &>/dev/null; then
+        process_info=$(netstat -tulnp 2>/dev/null | grep ":$port " | awk '{print $7}' | cut -d'/' -f1 | head -1)
+    fi
+    
+    echo "$process_info"
+}
+
+suggest_alternative_port() {
+    local original_port="$1"
+    local new_port=$((original_port + 1))
+    
+    # 尝试找到可用的端口
+    while [[ $new_port -le 65535 ]]; do
+        if is_port_available "$new_port"; then
+            echo "$new_port"
+            return
+        fi
+        new_port=$((new_port + 1))
+    done
+    
+    # 如果高位端口都不可用，尝试低位端口
+    new_port=$((original_port - 1))
+    while [[ $new_port -ge 1024 ]]; do
+        if is_port_available "$new_port"; then
+            echo "$new_port"
+            return
+        fi
+        new_port=$((new_port - 1))
+    done
+    
+    echo ""
 }
 
 # --- 预检查与环境设置 ---
@@ -310,7 +377,31 @@ install_vless_only() {
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" port || true
         [[ -z "$port" ]] && port=25433
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
+        if is_valid_port "$port"; then 
+            if ! is_port_available "$port"; then
+                local process_name=$(get_process_using_port "$port")
+                error "端口 $port 已被占用"
+                if [[ -n "$process_name" ]]; then
+                    info "占用进程: $process_name"
+                fi
+                local alt_port=$(suggest_alternative_port "$port")
+                if [[ -n "$alt_port" ]]; then
+                    read -p "$(echo -e " -> 是否使用替代端口 ${cyan}${alt_port}${none}? [Y/n]: ")" use_alt || true
+                    if [[ ! "$use_alt" =~ ^[nN]$ ]]; then
+                        port=$alt_port
+                        info "已选择替代端口: ${cyan}${port}${none}"
+                        break
+                    fi
+                else
+                    error "未找到可用替代端口，请手动指定其他端口。"
+                    continue
+                fi
+            else
+                break
+            fi
+        else 
+            error "端口无效，请输入1-65535之间的数字。"
+        fi
     done
     
     read -p "$(echo -e " -> 请输入UUID (留空将自动生成): ")" uuid || true
@@ -334,7 +425,31 @@ install_ss_only() {
     while true; do
         read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" port || true
         [[ -z "$port" ]] && port=25338
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
+        if is_valid_port "$port"; then 
+            if ! is_port_available "$port"; then
+                local process_name=$(get_process_using_port "$port")
+                error "端口 $port 已被占用"
+                if [[ -n "$process_name" ]]; then
+                    info "占用进程: $process_name"
+                fi
+                local alt_port=$(suggest_alternative_port "$port")
+                if [[ -n "$alt_port" ]]; then
+                    read -p "$(echo -e " -> 是否使用替代端口 ${cyan}${alt_port}${none}? [Y/n]: ")" use_alt || true
+                    if [[ ! "$use_alt" =~ ^[nN]$ ]]; then
+                        port=$alt_port
+                        info "已选择替代端口: ${cyan}${port}${none}"
+                        break
+                    fi
+                else
+                    error "未找到可用替代端口，请手动指定其他端口。"
+                    continue
+                fi
+            else
+                break
+            fi
+        else 
+            error "端口无效，请输入1-65535之间的数字。"
+        fi
     done
 
     read -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" password || true
@@ -353,18 +468,85 @@ install_dual() {
     while true; do
         read -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}25433${none}): ")" vless_port || true
         [[ -z "$vless_port" ]] && vless_port=25433
-        if is_valid_port "$vless_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
+        if is_valid_port "$vless_port"; then 
+            if ! is_port_available "$vless_port"; then
+                local process_name=$(get_process_using_port "$vless_port")
+                error "端口 $vless_port 已被占用"
+                if [[ -n "$process_name" ]]; then
+                    info "占用进程: $process_name"
+                fi
+                local alt_port=$(suggest_alternative_port "$vless_port")
+                if [[ -n "$alt_port" ]]; then
+                    read -p "$(echo -e " -> 是否使用替代端口 ${cyan}${alt_port}${none}? [Y/n]: ")" use_alt || true
+                    if [[ ! "$use_alt" =~ ^[nN]$ ]]; then
+                        vless_port=$alt_port
+                        info "已选择替代端口: ${cyan}${vless_port}${none}"
+                        break
+                    fi
+                else
+                    error "未找到可用替代端口，请手动指定其他端口。"
+                    continue
+                fi
+            else
+                break
+            fi
+        else 
+            error "端口无效，请输入1-65535之间的数字。"
+        fi
     done
     
     if [[ "$vless_port" == "25433" ]]; then
         while true; do
             read -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}25338${none}): ")" ss_port || true
             [[ -z "$ss_port" ]] && ss_port=25338
-            if is_valid_port "$ss_port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
+            if is_valid_port "$ss_port"; then 
+                if ! is_port_available "$ss_port"; then
+                    local process_name=$(get_process_using_port "$ss_port")
+                    error "端口 $ss_port 已被占用"
+                    if [[ -n "$process_name" ]]; then
+                        info "占用进程: $process_name"
+                    fi
+                    local alt_port=$(suggest_alternative_port "$ss_port")
+                    if [[ -n "$alt_port" ]]; then
+                        read -p "$(echo -e " -> 是否使用替代端口 ${cyan}${alt_port}${none}? [Y/n]: ")" use_alt || true
+                        if [[ ! "$use_alt" =~ ^[nN]$ ]]; then
+                            ss_port=$alt_port
+                            info "已选择替代端口: ${cyan}${ss_port}${none}"
+                            break
+                        fi
+                    else
+                        error "未找到可用替代端口，请手动指定其他端口。"
+                        continue
+                    fi
+                else
+                    break
+                fi
+            else 
+                error "端口无效，请输入1-65535之间的数字。"
+            fi
         done
     else
         ss_port=$((vless_port + 1))
-        info "VLESS 端口设置为: ${cyan}${vless_port}${none}, Shadowsocks 端口将自动设置为: ${cyan}${ss_port}${none}"
+        # 检查SS端口是否可用
+        if ! is_port_available "$ss_port"; then
+            info "VLESS 端口设置为: ${cyan}${vless_port}${none}, 但 Shadowsocks 端口 ${cyan}${ss_port}${none} 已被占用"
+            local alt_port=$(suggest_alternative_port "$ss_port")
+            if [[ -n "$alt_port" ]]; then
+                read -p "$(echo -e " -> 是否使用替代端口 ${cyan}${alt_port}${none}? [Y/n]: ")" use_alt || true
+                if [[ ! "$use_alt" =~ ^[nN]$ ]]; then
+                    ss_port=$alt_port
+                    info "已选择替代端口: ${cyan}${ss_port}${none}"
+                fi
+            else
+                error "未找到可用替代端口，请手动指定其他端口。"
+                while true; do
+                    read -p "$(echo -e " -> 请输入 Shadowsocks 端口: ")" ss_port || true
+                    if is_valid_port "$ss_port" && is_port_available "$ss_port"; then break; else error "端口无效或已被占用，请重新输入。"; fi
+                done
+            fi
+        else
+            info "VLESS 端口设置为: ${cyan}${vless_port}${none}, Shadowsocks 端口将自动设置为: ${cyan}${ss_port}${none}"
+        fi
     fi
     
     read -p "$(echo -e " -> 请输入 VLESS UUID (留空将自动生成): ")" vless_uuid || true
@@ -467,7 +649,19 @@ modify_vless_config() {
     while true; do
         read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
         [[ -z "$port" ]] && port=$current_port
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
+        if is_valid_port "$port"; then 
+            if [[ "$port" != "$current_port" ]] && ! is_port_available "$port"; then
+                local process_name=$(get_process_using_port "$port")
+                error "端口 $port 已被占用"
+                if [[ -n "$process_name" ]]; then
+                    info "占用进程: $process_name"
+                fi
+                continue
+            fi
+            break
+        else 
+            error "端口无效，请输入1-65535之间的数字。"
+        fi
     done
     
     read -p "$(echo -e " -> 新UUID (当前: ${cyan}${current_uuid:0:8}...${none}, 留空不改): ")" uuid || true
@@ -500,7 +694,19 @@ modify_ss_config() {
     while true; do
         read -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
         [[ -z "$port" ]] && port=$current_port
-        if is_valid_port "$port"; then break; else error "端口无效，请输入1-65535之间的数字。"; fi
+        if is_valid_port "$port"; then 
+            if [[ "$port" != "$current_port" ]] && ! is_port_available "$port"; then
+                local process_name=$(get_process_using_port "$port")
+                error "端口 $port 已被占用"
+                if [[ -n "$process_name" ]]; then
+                    info "占用进程: $process_name"
+                fi
+                continue
+            fi
+            break
+        else 
+            error "端口无效，请输入1-65535之间的数字。"
+        fi
     done
     
     read -p "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")" password || true
@@ -539,166 +745,4 @@ view_xray_log() {
 }
 
 view_all_info() { 
-    if [ ! -f "$xray_config_path" ]; then error "错误: 配置文件不存在。"; return; fi
-    clear && echo -e "${cyan} Xray 配置及订阅信息${none}" && draw_divider
-    local ip
-    ip=$(get_public_ip)
-    if [[ -z "$ip" ]]; then error "无法获取公网 IP 地址。"; return 1; fi
-    local host
-    host=$(hostname)
-    local links_array=()
-    
-    local vless_inbound
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-    if [[ -n "$vless_inbound" ]]; then
-        local uuid port domain public_key shortid display_ip link_name_raw link_name_encoded vless_url
-        uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
-        port=$(echo "$vless_inbound" | jq -r '.port')
-        domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]')
-        public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey')
-        shortid=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]')
-        display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"
-        link_name_raw="$host"
-        link_name_encoded=$(echo "$link_name_raw" | sed 's/ /%20/g')
-        vless_url="vless://${uuid}@${display_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=chrome&pbk=${public_key}&sid=${shortid}#${link_name_encoded}"
-        links_array+=("$vless_url")
-        echo -e "${green} [ VLESS-Reality 配置 ]${none}"
-        printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-        printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-        printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"
-    fi
-    
-    local ss_inbound
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-    if [[ -n "$ss_inbound" ]]; then
-        local port method password link_name_raw user_info_base64 ss_url
-        port=$(echo "$ss_inbound" | jq -r '.port')
-        method=$(echo "$ss_inbound" | jq -r '.settings.method')
-        password=$(echo "$ss_inbound" | jq -r '.settings.password')
-        link_name_raw="$host-SS"
-        user_info_base64=$(echo -n "${method}:${password}" | base64 -w 0)
-        ss_url="ss://${user_info_base64}@${ip}:${port}#${link_name_raw}"
-        links_array+=("$ss_url")
-        echo ""
-        echo -e "${green} [ Shadowsocks (SS 2022) 配置 ]${none}"
-        printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-        printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-        printf "    %s: ${cyan}%s${none}\n" "加密方式" "$method"
-        printf "    %s: ${cyan}%s${none}\n" "密码" "$password"
-    fi
-    
-    if [ ${#links_array[@]} -gt 0 ]; then
-        draw_divider
-        printf "%s\n" "${links_array[@]}" > ~/xray_subscription_info.txt
-        success "所有订阅链接已汇总保存到: ~/xray_subscription_info.txt"
-        echo -e "\n${yellow} --- V2Ray / Clash 等客户端可直接导入以下链接 --- ${none}\n"
-        for link in "${links_array[@]}"; do
-            echo -e "${cyan}${link}${none}\n"
-        done
-        draw_divider
-    else
-        info "当前未安装任何协议，无订阅信息可显示。"
-    fi
-}
-
-run_install_vless() { 
-    local port="$1" uuid="$2" domain="$3"
-    run_core_install || exit 1
-    info "正在生成 Reality 密钥对..."
-    local key_pair private_key public_key vless_inbound
-    key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk '/PrivateKey:/ {print $2}')
-    public_key=$(echo "$key_pair" | awk '/Password:/ {print $2}')
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-        exit 1
-    fi
-    vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$public_key")
-    write_config "[$vless_inbound]"
-    restart_xray
-    success "VLESS-Reality 安装成功！"
-    view_all_info
-}
-
-run_install_ss() { 
-    local port="$1" password="$2"
-    run_core_install || exit 1
-    local ss_inbound
-    ss_inbound=$(build_ss_inbound "$port" "$password")
-    write_config "[$ss_inbound]"
-    restart_xray
-    success "Shadowsocks (SS 2022) 安装成功！"
-    view_all_info
-}
-
-run_install_dual() { 
-    local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
-    run_core_install || exit 1
-    info "正在生成 Reality 密钥对..."
-    local key_pair private_key public_key vless_inbound ss_inbound
-    key_pair=$(LC_ALL=C "$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk '/PrivateKey:/ {print $2}')
-    public_key=$(echo "$key_pair" | awk '/Password:/ {print $2}')
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
-        exit 1
-    fi
-    vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$public_key")
-    ss_inbound=$(build_ss_inbound "$ss_port" "$ss_password")
-    write_config "[$vless_inbound, $ss_inbound]"
-    restart_xray
-    success "双协议安装成功！"
-    view_all_info
-}
-
-# --- 主菜单与脚本入口 ---
-main_menu() {
-    while true; do
-        draw_menu_header
-        printf "  ${green}%-2s${none} %-35s\n" "1." "安装 Xray"
-        printf "  ${cyan}%-2s${none} %-35s\n" "2." "更新 Xray"
-        printf "  ${red}%-2s${none} %-35s\n" "3." "卸载 Xray"
-        draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "4." "修改配置"
-        printf "  ${cyan}%-2s${none} %-35s\n" "5." "重启 Xray"
-        printf "  ${magenta}%-2s${none} %-35s\n" "6." "查看 Xray 日志"
-        printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
-        printf "  ${cyan}%-2s${none} %-35s\n" "8." "切换调试日志模式"
-        draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本"
-        draw_divider
-        
-        read -p " 请输入选项 [0-8]: " choice || true
-        
-        local needs_pause=true
-        
-        case "$choice" in
-            1) install_menu ;;
-            2) update_xray ;;
-            3) uninstall_xray ;;
-            4) modify_config_menu ;;
-            5) restart_xray ;;
-            6) view_xray_log; needs_pause=false ;;
-            7) view_all_info ;;
-            8) toggle_debug_mode ;;
-            0) 
-                success "感谢使用！"
-                exit 0
-                ;;
-            *) 
-                error "无效选项。请输入0到8之间的数字。" 
-                ;;
-        esac
-        
-        if [ "$needs_pause" = true ]; then
-            press_any_key_to_continue
-        fi
-    done
-}
-
-main() {
-    pre_check
-    main_menu
-}
-
-main "$@"
+    if [ ! -f "$xray_config_path" ]; then error "错误: 配置文件不存在。"
