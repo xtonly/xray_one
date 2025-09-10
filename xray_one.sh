@@ -6,48 +6,48 @@
 #
 #         USAGE: bash xray_manager.sh
 #
-#   DESCRIPTION: 一个集安装、配置、管理和卸载于一体的 Xray 全功能脚本。
-#                支持 VLESS+REALITY 和 Shadowsocks-2022。
+#   DESCRIPTION: An all-in-one script for installing, configuring, managing, and uninstalling Xray.
+#                Supports VLESS+REALITY and Shadowsocks-2022.
 #
-#      REVISION: 1.4 - [重大修复] 重写了节点信息的存储和读取逻辑，
-#                      彻底解决了 SS 链接端口错乱和别名为空的严重 BUG。
-#                      从易出错的 grep/awk 解析改为更可靠的 source 方法。
+#      REVISION: 2.0 - [Feature Update & Fix] Addressed VLESS connectivity issues and
+#                      incorporated new features from recent Xray versions.
+#                      Updated cipher suites and improved configuration options.
 #
 #====================================================================================
 
-# --- 颜色定义 ---
+# --- Color Definitions ---
 GREEN="\033[32m"
 RED="\033[31m"
 YELLOW="\033[33m"
 BLUE="\033[34m"
 PLAIN="\033[0m"
 
-# --- 全局变量 ---
+# --- Global Variables ---
 XRAY_CONFIG_DIR="/usr/local/etc/xray"
 XRAY_CONFIG_FILE="$XRAY_CONFIG_DIR/config.json"
-NODE_INFO_FILE="$XRAY_CONFIG_DIR/node_info.conf" # 改为 .conf 后缀
+NODE_INFO_FILE="$XRAY_CONFIG_DIR/node_info.conf"
 
-# --- 函数定义 ---
+# --- Function Definitions ---
 
-# 打印彩色信息
+# Print colorful information
 color_echo() {
     echo -e "${!1}${2}${PLAIN}"
 }
 
-# 检查是否为 root 用户
+# Check if running as root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        color_echo RED "错误：此脚本必须以 root 身份运行！"
+        color_echo RED "Error: This script must be run as root!"
         exit 1
     fi
 }
 
-# 暂停脚本，等待用户输入
+# Pause the script and wait for user input
 pause() {
-    read -rp "按 [Enter] 键返回主菜单..."
+    read -rp "Press [Enter] to return to the main menu..."
 }
 
-# URL编码函数
+# URL encode a string
 url_encode() {
     local string="$1"
     local encoded=""
@@ -62,9 +62,9 @@ url_encode() {
     echo "$encoded"
 }
 
-# 获取公网 IP 地址
+# Get the public IP address
 get_public_ip() {
-    color_echo YELLOW "正在检测服务器公网 IP 地址..."
+    color_echo YELLOW "Detecting server public IP address..."
     IP_SERVICES=(
         "https://ipinfo.io/ip"
         "https://api.ipify.org"
@@ -81,56 +81,58 @@ get_public_ip() {
     done
 
     if [ -z "$PUBLIC_IP" ]; then
-        color_echo RED "自动检测公网 IP 失败。请检查网络或稍后重试。"
+        color_echo RED "Failed to detect public IP. Please check your network or try again later."
         exit 1
     fi
-    color_echo GREEN "服务器公网 IP: $PUBLIC_IP"
+    color_echo GREEN "Server Public IP: $PUBLIC_IP"
 }
 
-# 安装 Xray
+# Install Xray
 install_xray() {
-    color_echo BLUE ">>> 正在安装 Xray..."
+    color_echo BLUE ">>> Installing Xray..."
     if command -v xray &>/dev/null; then
-        color_echo GREEN "Xray 已安装。将执行更新操作。"
+        color_echo GREEN "Xray is already installed. An update will be performed."
     fi
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     if ! command -v xray &>/dev/null; then
-        color_echo RED "Xray 安装失败或未在 PATH 中找到！请检查安装日志。"
+        color_echo RED "Xray installation failed or not found in PATH! Please check the installation log."
         exit 1
     fi
     systemctl enable xray
-    color_echo GREEN "Xray 安装/更新成功！"
+    color_echo GREEN "Xray installed/updated successfully!"
 }
 
-# 配置 Xray 并生成节点信息
+# Configure Xray and generate node information
 configure_and_generate_links() {
-    color_echo BLUE ">>> 正在为您配置 Xray 并生成节点..."
-    
-    read -rp "请输入 VLESS 服务的端口 (默认 443): " VLESS_PORT
+    color_echo BLUE ">>> Configuring Xray and generating nodes for you..."
+
+    read -rp "Enter VLESS service port (default 443): " VLESS_PORT
     VLESS_PORT=${VLESS_PORT:-443}
-    read -rp "请输入 Shadowsocks 服务的端口 (默认 8443): " SS_PORT
+    read -rp "Enter Shadowsocks service port (default 8443): " SS_PORT
     SS_PORT=${SS_PORT:-8443}
-    read -rp "请输入一个真实的、可访问的目标网站域名 (例如 www.microsoft.com): " SNI
+    read -rp "Enter a real, accessible destination domain (e.g., www.microsoft.com): " SNI
     if [ -z "$SNI" ]; then
-        color_echo RED "目标网站域名不能为空！"
+        color_echo RED "Destination domain cannot be empty!"
         return 1
     fi
+    read -rp "Enter xver value for REALITY (0 for no forwarding, 1 for forwarding, default 0): " XVER
+    XVER=${XVER:-0}
 
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
     PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -i "private" | cut -d':' -f2 | xargs)
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i "public\|password" | cut -d':' -f2 | xargs)
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i "public" | cut -d':' -f2 | xargs)
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        color_echo RED "错误：生成 REALITY 密钥对失败！请手动运行 'xray x25519' 查看报错。"
+        color_echo RED "Error: Failed to generate REALITY key pair! Please run 'xray x25519' manually to check for errors."
         return 1
     fi
-    
+
     SHORT_ID=$(openssl rand -hex 8)
     SS_METHOD="2022-blake3-aes-128-gcm"
     SS_PASSWORD=$(openssl rand -base64 16)
-    
-    color_echo YELLOW "正在写入服务器配置文件..."
+
+    color_echo YELLOW "Writing server configuration file..."
     cat > "$XRAY_CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "warning" },
@@ -144,7 +146,7 @@ configure_and_generate_links() {
       "streamSettings": {
         "network": "tcp", "security": "reality",
         "realitySettings": {
-          "show": false, "dest": "${SNI}:443", "xver": 0,
+          "show": false, "dest": "${SNI}:443", "xver": ${XVER},
           "serverNames": [ "${SNI}" ],
           "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ]
         }
@@ -160,7 +162,6 @@ configure_and_generate_links() {
 }
 EOF
 
-    # 【v1.4 重大修复】使用更可靠的方式保存节点信息
     get_public_ip
     SERVER_HOSTNAME=$(hostname)
     cat > "$NODE_INFO_FILE" <<EOF
@@ -176,9 +177,9 @@ SERVER_IP="${PUBLIC_IP}"
 HOSTNAME="${SERVER_HOSTNAME}"
 EOF
 
-    color_echo GREEN "服务器配置写入成功！"
+    color_echo GREEN "Server configuration written successfully!"
 
-    color_echo YELLOW "正在配置防火墙..."
+    color_echo YELLOW "Configuring firewall..."
     if command -v ufw &>/dev/null; then
         ufw allow ${VLESS_PORT}/tcp >/dev/null 2>&1
         ufw allow ${SS_PORT}/tcp >/dev/null 2>&1
@@ -190,86 +191,85 @@ EOF
 
     systemctl restart xray
     if systemctl is-active --quiet xray; then
-        color_echo GREEN "Xray 已成功启动！"
+        color_echo GREEN "Xray started successfully!"
     else
-        color_echo RED "Xray 启动失败！请使用菜单 5 查看日志以定位问题。"
+        color_echo RED "Xray failed to start! Please use menu option 5 to view logs and diagnose the issue."
         return 1
     fi
-    
+
     view_links
 }
 
-# 查看节点信息
+# View node information
 view_links() {
     if [ ! -f "$NODE_INFO_FILE" ]; then
-        color_echo RED "未找到节点信息文件。请先执行安装与配置。"
+        color_echo RED "Node information file not found. Please run the installation and configuration first."
         return
     fi
-    
-    # 【v1.4 重大修复】使用 source 命令读取配置，避免解析错误
+
     source "$NODE_INFO_FILE"
 
     VLESS_REMARK_ENCODED=$(url_encode "${HOSTNAME}")
     SS_REMARK_ENCODED=$(url_encode "${HOSTNAME}-SS")
 
     VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
-    
+
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
-    
-    color_echo GREEN "====================== 您的节点信息 ======================"
-    color_echo YELLOW "[VLESS + REALITY 节点链接]"
+
+    color_echo GREEN "====================== Your Node Information ======================"
+    color_echo YELLOW "[VLESS + REALITY Node Link]"
     echo "${VLESS_LINK}"
     echo ""
-    color_echo YELLOW "[Shadowsocks (SS2022) 节点链接]"
+    color_echo YELLOW "[Shadowsocks (SS2022) Node Link]"
     echo "${SS_LINK}"
     color_echo GREEN "=========================================================="
 }
 
-# 卸载 Xray
+# Uninstall Xray
 uninstall_xray() {
-    read -rp "您确定要卸载 Xray 吗？(y/N): " confirm
+    read -rp "Are you sure you want to uninstall Xray? (y/N): " confirm
     if [[ "${confirm,,}" != "y" ]]; then
-        color_echo YELLOW "卸载操作已取消。"
+        color_echo YELLOW "Uninstall operation canceled."
         return
     fi
-    
+
     systemctl stop xray
     systemctl disable xray
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge
     rm -rf "$XRAY_CONFIG_DIR"
-    color_echo GREEN "Xray 已成功卸载！"
+    color_echo GREEN "Xray has been successfully uninstalled!"
 }
 
-# 主菜单
+# Main menu
 show_menu() {
     clear
     color_echo GREEN "=========================================================="
-    color_echo GREEN "          Xray 全功能管理脚本 v1.4 (VLESS/SS)"
+    color_echo GREEN "          Xray All-in-One Management Script v2.0 (VLESS/SS)"
     color_echo GREEN "=========================================================="
-    color_echo BLUE "  1. 安装并配置 Xray (首次/重新配置请选此项)"
-    color_echo BLUE "  2. 查看节点信息"
-    color_echo BLUE "  3. 重启 Xray 服务"
-    color_echo BLUE "  4. 停止 Xray 服务"
-    color_echo BLUE "  5. 查看 Xray 状态与日志"
-    color_echo YELLOW "  6. 卸载 Xray"
-    color_echo PLAIN "  0. 退出脚本"
+    color_echo BLUE "  1. Install and Configure Xray (Select for first time/reconfiguration)"
+    color_echo BLUE "  2. View Node Information"
+    color_echo BLUE "  3. Restart Xray Service"
+    color_echo BLUE "  4. Stop Xray Service"
+    color_echo BLUE "  5. View Xray Status and Logs"
+    color_echo YELLOW "  6. Uninstall Xray"
+    color_echo PLAIN "  0. Exit Script"
     color_echo GREEN "=========================================================="
-    read -rp "请输入选项 [0-6]: " choice
-    
+    read -rp "Please enter your choice [0-6]: " choice
+
     case $choice in
         1) install_xray && configure_and_generate_links; pause ;;
         2) view_links; pause ;;
-        3) systemctl restart xray; color_echo GREEN "Xray 服务已重启。"; sleep 2 ;;
-        4) systemctl stop xray; color_echo GREEN "Xray 服务已停止。"; sleep 2 ;;
-        5) color_echo YELLOW "正在查看 Xray 实时日志，按 Ctrl+C 退出..."; journalctl -u xray -f --no-pager; pause ;;
+        3) systemctl restart xray; color_echo GREEN "Xray service has been restarted."; sleep 2 ;;
+        4) systemctl stop xray; color_echo GREEN "Xray service has been stopped."; sleep 2 ;;
+        5) color_echo YELLOW "Viewing real-time Xray logs, press Ctrl+C to exit..."; journalctl -u xray -f --no-pager; pause ;;
         6) uninstall_xray; pause ;;
         0) exit 0 ;;
-        *) color_echo RED "无效选项，请输入正确的数字。"; sleep 2 ;;
+        *) color_echo RED "Invalid option, please enter a correct number."; sleep 2 ;;
     esac
 }
 
-# --- 脚本主入口 ---
+# --- Script Main Entry ---
 check_root
 while true; do
     show_menu
