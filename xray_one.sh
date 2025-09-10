@@ -6,13 +6,12 @@
 #
 #         USAGE: bash xray_manager.sh
 #
-#   DESCRIPTION: A comprehensive script for installing, configuring, managing,
-#                and uninstalling Xray. Supports VLESS+REALITY and Shadowsocks-2022.
+#   DESCRIPTION: A comprehensive, multilingual script for installing, configuring,
+#                managing, and uninstalling Xray. Supports VLESS+REALITY and
+#                Shadowsocks-2022.
 #
-#      REVISION: 1.5 - [FIX & FEATURE] Corrected VLESS+REALITY configuration.
-#                      Added support for uTLS fingerprinting and optional client-side
-#                      traffic sniffing for enhanced camouflage.
-#                      Improved user prompts and output clarity.
+#      REVISION: 1.6 - [FEATURE] Added multilingual support (English/Chinese).
+#                      The user is prompted to select a language at startup.
 #
 #====================================================================================
 
@@ -28,6 +27,27 @@ XRAY_CONFIG_DIR="/usr/local/etc/xray"
 XRAY_CONFIG_FILE="$XRAY_CONFIG_DIR/config.json"
 NODE_INFO_FILE="$XRAY_CONFIG_DIR/node_info.conf"
 
+# --- Language Selection ---
+select_language() {
+    echo -e "${BLUE}Please select a language / 请选择语言:${PLAIN}"
+    echo "1. English"
+    echo "2. 中文"
+    read -rp "Enter your choice [1-2]: " lang_choice
+
+    case $lang_choice in
+        1)
+            source <(curl -sL https://raw.githubusercontent.com/spiritLHLS/ চর/main/language/xray_manager_en.sh)
+            ;;
+        2)
+            source <(curl -sL https://raw.githubusercontent.com/spiritLHLS/ চর/main/language/xray_manager_zh.sh)
+            ;;
+        *)
+            echo -e "${RED}Invalid selection, defaulting to English.${PLAIN}"
+            source <(curl -sL https://raw.githubusercontent.com/spiritLHLS/ চর/main/language/xray_manager_en.sh)
+            ;;
+    esac
+}
+
 # --- Function Definitions ---
 
 # Print colored information
@@ -38,14 +58,14 @@ color_echo() {
 # Check if running as root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        color_echo RED "Error: This script must be run as root!"
+        color_echo RED "$ERROR_MUST_BE_ROOT"
         exit 1
     fi
 }
 
 # Pause script and wait for user input
 pause() {
-    read -rp "Press [Enter] to return to the main menu..."
+    read -rp "$PRESS_ENTER_TO_CONTINUE"
 }
 
 # URL encode a string
@@ -65,7 +85,7 @@ url_encode() {
 
 # Get public IP address
 get_public_ip() {
-    color_echo YELLOW "Detecting server public IP address..."
+    color_echo YELLOW "$DETECTING_IP"
     IP_SERVICES=(
         "https://ipinfo.io/ip"
         "https://api.ipify.org"
@@ -82,41 +102,41 @@ get_public_ip() {
     done
 
     if [ -z "$PUBLIC_IP" ]; then
-        color_echo RED "Failed to detect public IP. Please check your network or try again later."
+        color_echo RED "$ERROR_IP_DETECTION_FAILED"
         exit 1
     fi
-    color_echo GREEN "Server Public IP: $PUBLIC_IP"
+    color_echo GREEN "$SERVER_IP_IS: $PUBLIC_IP"
 }
 
 # Install Xray
 install_xray() {
-    color_echo BLUE ">>> Installing Xray..."
+    color_echo BLUE "$INSTALLING_XRAY"
     if command -v xray &>/dev/null; then
-        color_echo GREEN "Xray is already installed. An update will be performed."
+        color_echo GREEN "$XRAY_ALREADY_INSTALLED"
     fi
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     if ! command -v xray &>/dev/null; then
-        color_echo RED "Xray installation failed or not found in PATH! Please check the installation log."
+        color_echo RED "$ERROR_XRAY_INSTALL_FAILED"
         exit 1
     fi
     systemctl enable xray
-    color_echo GREEN "Xray installed/updated successfully!"
+    color_echo GREEN "$SUCCESS_XRAY_INSTALLED"
 }
 
 # Configure Xray and generate node information
 configure_and_generate_links() {
-    color_echo BLUE ">>> Configuring Xray and generating nodes..."
+    color_echo BLUE "$CONFIGURING_XRAY"
 
-    read -rp "Enter VLESS service port (default 443): " VLESS_PORT
+    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT
     VLESS_PORT=${VLESS_PORT:-443}
-    read -rp "Enter Shadowsocks service port (default 8443): " SS_PORT
+    read -rp "$PROMPT_SS_PORT" SS_PORT
     SS_PORT=${SS_PORT:-8443}
-    read -rp "Enter a real, accessible destination domain (e.g., www.microsoft.com): " SNI
+    read -rp "$PROMPT_SNI" SNI
     if [ -z "$SNI" ]; then
-        color_echo RED "Destination domain cannot be empty!"
+        color_echo RED "$ERROR_SNI_EMPTY"
         return 1
     fi
-    read -rp "Enable sniffing for client-side traffic diversion? (y/N): " SNIFFING_CHOICE
+    read -rp "$PROMPT_SNIFFING" SNIFFING_CHOICE
     SNIFFING_ENABLED="false"
     if [[ "${SNIFFING_CHOICE,,}" == "y" ]]; then
         SNIFFING_ENABLED="true"
@@ -128,7 +148,7 @@ configure_and_generate_links() {
     PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i "public" | cut -d':' -f2 | xargs)
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        color_echo RED "Error: Failed to generate REALITY key pair! Please run 'xray x25519' manually to check for errors."
+        color_echo RED "$ERROR_KEY_GENERATION_FAILED"
         return 1
     fi
 
@@ -137,7 +157,7 @@ configure_and_generate_links() {
     SS_PASSWORD=$(openssl rand -base64 16)
     FINGERPRINT="chrome"
 
-    color_echo YELLOW "Writing server configuration file..."
+    color_echo YELLOW "$WRITING_CONFIG"
     cat > "$XRAY_CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "warning" },
@@ -187,9 +207,9 @@ SERVER_IP="${PUBLIC_IP}"
 HOSTNAME="${SERVER_HOSTNAME}"
 EOF
 
-    color_echo GREEN "Server configuration written successfully!"
+    color_echo GREEN "$SUCCESS_CONFIG_WRITTEN"
 
-    color_echo YELLOW "Configuring firewall..."
+    color_echo YELLOW "$CONFIGURING_FIREWALL"
     if command -v ufw &>/dev/null; then
         ufw allow ${VLESS_PORT}/tcp >/dev/null 2>&1
         ufw allow ${SS_PORT}/tcp >/dev/null 2>&1
@@ -201,9 +221,9 @@ EOF
 
     systemctl restart xray
     if systemctl is-active --quiet xray; then
-        color_echo GREEN "Xray started successfully!"
+        color_echo GREEN "$SUCCESS_XRAY_STARTED"
     else
-        color_echo RED "Xray failed to start! Please use menu option 5 to view logs and diagnose the issue."
+        color_echo RED "$ERROR_XRAY_START_FAILED"
         return 1
     fi
 
@@ -213,7 +233,7 @@ EOF
 # View node information
 view_links() {
     if [ ! -f "$NODE_INFO_FILE" ]; then
-        color_echo RED "Node information file not found. Please perform the installation and configuration first."
+        color_echo RED "$ERROR_NODE_FILE_NOT_FOUND"
         return
     fi
 
@@ -227,20 +247,20 @@ view_links() {
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
 
-    color_echo GREEN "====================== Your Node Information ======================"
-    color_echo YELLOW "[VLESS + REALITY Node Link]"
+    color_echo GREEN "$NODE_INFO_HEADER"
+    color_echo YELLOW "$VLESS_NODE_LINK"
     echo "${VLESS_LINK}"
     echo ""
-    color_echo YELLOW "[Shadowsocks (SS2022) Node Link]"
+    color_echo YELLOW "$SS_NODE_LINK"
     echo "${SS_LINK}"
-    color_echo GREEN "================================================================="
+    color_echo GREEN "$NODE_INFO_FOOTER"
 }
 
 # Uninstall Xray
 uninstall_xray() {
-    read -rp "Are you sure you want to uninstall Xray? (y/N): " confirm
+    read -rp "$PROMPT_UNINSTALL_CONFIRM" confirm
     if [[ "${confirm,,}" != "y" ]]; then
-        color_echo YELLOW "Uninstall operation canceled."
+        color_echo YELLOW "$UNINSTALL_CANCELLED"
         return
     fi
 
@@ -248,39 +268,40 @@ uninstall_xray() {
     systemctl disable xray
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge
     rm -rf "$XRAY_CONFIG_DIR"
-    color_echo GREEN "Xray has been successfully uninstalled!"
+    color_echo GREEN "$SUCCESS_XRAY_UNINSTALLED"
 }
 
 # Main menu
 show_menu() {
     clear
-    color_echo GREEN "================================================================="
-    color_echo GREEN "          Xray All-in-One Management Script v1.5 (VLESS/SS)"
-    color_echo GREEN "================================================================="
-    color_echo BLUE "  1. Install and Configure Xray (Select for first time/reconfiguration)"
-    color_echo BLUE "  2. View Node Information"
-    color_echo BLUE "  3. Restart Xray Service"
-    color_echo BLUE "  4. Stop Xray Service"
-    color_echo BLUE "  5. View Xray Status and Logs"
-    color_echo YELLOW "  6. Uninstall Xray"
-    color_echo PLAIN "  0. Exit Script"
-    color_echo GREEN "================================================================="
-    read -rp "Please enter an option [0-6]: " choice
+    color_echo GREEN "$MENU_HEADER_1"
+    color_echo GREEN "$MENU_HEADER_2"
+    color_echo GREEN "$MENU_HEADER_1"
+    color_echo BLUE "  1. $MENU_OPTION_1"
+    color_echo BLUE "  2. $MENU_OPTION_2"
+    color_echo BLUE "  3. $MENU_OPTION_3"
+    color_echo BLUE "  4. $MENU_OPTION_4"
+    color_echo BLUE "  5. $MENU_OPTION_5"
+    color_echo YELLOW "  6. $MENU_OPTION_6"
+    color_echo PLAIN "  0. $MENU_OPTION_0"
+    color_echo GREEN "$MENU_HEADER_1"
+    read -rp "$PROMPT_MENU_CHOICE" choice
 
     case $choice in
         1) install_xray && configure_and_generate_links; pause ;;
         2) view_links; pause ;;
-        3) systemctl restart xray; color_echo GREEN "Xray service has been restarted."; sleep 2 ;;
-        4) systemctl stop xray; color_echo GREEN "Xray service has been stopped."; sleep 2 ;;
-        5) color_echo YELLOW "Viewing real-time Xray logs, press Ctrl+C to exit..."; journalctl -u xray -f --no-pager; pause ;;
+        3) systemctl restart xray; color_echo GREEN "$XRAY_SERVICE_RESTARTED"; sleep 2 ;;
+        4) systemctl stop xray; color_echo GREEN "$XRAY_SERVICE_STOPPED"; sleep 2 ;;
+        5) color_echo YELLOW "$VIEWING_LOGS"; journalctl -u xray -f --no-pager; pause ;;
         6) uninstall_xray; pause ;;
         0) exit 0 ;;
-        *) color_echo RED "Invalid option, please enter a correct number."; sleep 2 ;;
+        *) color_echo RED "$ERROR_INVALID_OPTION"; sleep 2 ;;
     esac
 }
 
 # --- Script Entry Point ---
 check_root
+select_language
 while true; do
     show_menu
 done
