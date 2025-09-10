@@ -10,8 +10,10 @@
 #                managing, and uninstalling Xray. Supports VLESS+REALITY and
 #                Shadowsocks-2022.
 #
-#      REVISION: 1.6 - [FEATURE] Added multilingual support (English/Chinese).
-#                      The user is prompted to select a language at startup.
+#      REVISION: 1.7 - [CRITICAL FIX] Embedded language files directly into the
+#                      script to fix the invisible text/blank menu issue caused
+#                      by failing to fetch external language files. The script
+#                      is now self-contained and more reliable.
 #
 #====================================================================================
 
@@ -27,7 +29,100 @@ XRAY_CONFIG_DIR="/usr/local/etc/xray"
 XRAY_CONFIG_FILE="$XRAY_CONFIG_DIR/config.json"
 NODE_INFO_FILE="$XRAY_CONFIG_DIR/node_info.conf"
 
-# --- Language Selection ---
+# --- Embedded Language Functions ---
+
+load_lang_en() {
+    ERROR_MUST_BE_ROOT="Error: This script must be run as root!"
+    PRESS_ENTER_TO_CONTINUE="Press [Enter] to return to the main menu..."
+    DETECTING_IP="Detecting server public IP address..."
+    ERROR_IP_DETECTION_FAILED="Failed to detect public IP. Please check your network or try again later."
+    SERVER_IP_IS="Server Public IP:"
+    INSTALLING_XRAY=">>> Installing Xray..."
+    XRAY_ALREADY_INSTALLED="Xray is already installed. An update will be performed."
+    ERROR_XRAY_INSTALL_FAILED="Xray installation failed or not found in PATH! Please check the installation log."
+    SUCCESS_XRAY_INSTALLED="Xray installed/updated successfully!"
+    CONFIGURING_XRAY=">>> Configuring Xray and generating nodes..."
+    PROMPT_VLESS_PORT="Enter VLESS service port (default 443): "
+    PROMPT_SS_PORT="Enter Shadowsocks service port (default 8443): "
+    PROMPT_SNI="Enter a real, accessible destination domain (e.g., www.microsoft.com): "
+    ERROR_SNI_EMPTY="Destination domain cannot be empty!"
+    PROMPT_SNIFFING="Enable sniffing for client-side traffic diversion? (y/N): "
+    ERROR_KEY_GENERATION_FAILED="Error: Failed to generate REALITY key pair! Please run 'xray x25519' manually to check for errors."
+    WRITING_CONFIG="Writing server configuration file..."
+    SUCCESS_CONFIG_WRITTEN="Server configuration written successfully!"
+    CONFIGURING_FIREWALL="Configuring firewall..."
+    SUCCESS_XRAY_STARTED="Xray started successfully!"
+    ERROR_XRAY_START_FAILED="Xray failed to start! Please use menu option 5 to view logs and diagnose the issue."
+    ERROR_NODE_FILE_NOT_FOUND="Node information file not found. Please perform the installation and configuration first."
+    NODE_INFO_HEADER="====================== Your Node Information ======================"
+    VLESS_NODE_LINK="[VLESS + REALITY Node Link]"
+    SS_NODE_LINK="[Shadowsocks (SS2022) Node Link]"
+    NODE_INFO_FOOTER="================================================================="
+    PROMPT_UNINSTALL_CONFIRM="Are you sure you want to uninstall Xray? (y/N): "
+    UNINSTALL_CANCELLED="Uninstall operation canceled."
+    SUCCESS_XRAY_UNINSTALLED="Xray has been successfully uninstalled!"
+    MENU_HEADER_1="================================================================="
+    MENU_HEADER_2="          Xray All-in-One Management Script v1.7 (VLESS/SS)"
+    MENU_OPTION_1="Install and Configure Xray (Select for first time/reconfiguration)"
+    MENU_OPTION_2="View Node Information"
+    MENU_OPTION_3="Restart Xray Service"
+    MENU_OPTION_4="Stop Xray Service"
+    MENU_OPTION_5="View Xray Status and Logs"
+    MENU_OPTION_6="Uninstall Xray"
+    MENU_OPTION_0="Exit Script"
+    PROMPT_MENU_CHOICE="Please enter an option [0-6]: "
+    XRAY_SERVICE_RESTARTED="Xray service has been restarted."
+    XRAY_SERVICE_STOPPED="Xray service has been stopped."
+    VIEWING_LOGS="Viewing real-time Xray logs, press Ctrl+C to exit..."
+    ERROR_INVALID_OPTION="Invalid option, please enter a correct number."
+}
+
+load_lang_zh() {
+    ERROR_MUST_BE_ROOT="错误：此脚本必须以 root 身份运行！"
+    PRESS_ENTER_TO_CONTINUE="按 [Enter] 键返回主菜单..."
+    DETECTING_IP="正在检测服务器公网 IP 地址..."
+    ERROR_IP_DETECTION_FAILED="自动检测公网 IP 失败。请检查网络或稍后重试。"
+    SERVER_IP_IS="服务器公网 IP:"
+    INSTALLING_XRAY=">>> 正在安装 Xray..."
+    XRAY_ALREADY_INSTALLED="Xray 已安装。将执行更新操作。"
+    ERROR_XRAY_INSTALL_FAILED="Xray 安装失败或未在 PATH 中找到！请检查安装日志。"
+    SUCCESS_XRAY_INSTALLED="Xray 安装/更新成功！"
+    CONFIGURING_XRAY=">>> 正在为您配置 Xray 并生成节点..."
+    PROMPT_VLESS_PORT="请输入 VLESS 服务的端口 (默认 443): "
+    PROMPT_SS_PORT="请输入 Shadowsocks 服务的端口 (默认 8443): "
+    PROMPT_SNI="请输入一个真实的、可访问的目标网站域名 (例如 www.microsoft.com): "
+    ERROR_SNI_EMPTY="目标网站域名不能为空！"
+    PROMPT_SNIFFING="是否为客户端开启流量嗅探(sniffing)功能？(y/N): "
+    ERROR_KEY_GENERATION_FAILED="错误：生成 REALITY 密钥对失败！请手动运行 'xray x25519' 查看报错。"
+    WRITING_CONFIG="正在写入服务器配置文件..."
+    SUCCESS_CONFIG_WRITTEN="服务器配置写入成功！"
+    CONFIGURING_FIREWALL="正在配置防火墙..."
+    SUCCESS_XRAY_STARTED="Xray 已成功启动！"
+    ERROR_XRAY_START_FAILED="Xray 启动失败！请使用菜单 5 查看日志以定位问题。"
+    ERROR_NODE_FILE_NOT_FOUND="未找到节点信息文件。请先执行安装与配置。"
+    NODE_INFO_HEADER="====================== 您的节点信息 ======================"
+    VLESS_NODE_LINK="[VLESS + REALITY 节点链接]"
+    SS_NODE_LINK="[Shadowsocks (SS2022) 节点链接]"
+    NODE_INFO_FOOTER="=========================================================="
+    PROMPT_UNINSTALL_CONFIRM="您确定要卸载 Xray 吗？(y/N): "
+    UNINSTALL_CANCELLED="卸载操作已取消。"
+    SUCCESS_XRAY_UNINSTALLED="Xray 已成功卸载！"
+    MENU_HEADER_1="=========================================================="
+    MENU_HEADER_2="          Xray 全功能管理脚本 v1.7 (VLESS/SS)"
+    MENU_OPTION_1="安装并配置 Xray (首次/重新配置请选此项)"
+    MENU_OPTION_2="查看节点信息"
+    MENU_OPTION_3="重启 Xray 服务"
+    MENU_OPTION_4="停止 Xray 服务"
+    MENU_OPTION_5="查看 Xray 状态与日志"
+    MENU_OPTION_6="卸载 Xray"
+    MENU_OPTION_0="退出脚本"
+    PROMPT_MENU_CHOICE="请输入选项 [0-6]: "
+    XRAY_SERVICE_RESTARTED="Xray 服务已重启。"
+    XRAY_SERVICE_STOPPED="Xray 服务已停止。"
+    VIEWING_LOGS="正在查看 Xray 实时日志，按 Ctrl+C 退出..."
+    ERROR_INVALID_OPTION="无效选项，请输入正确的数字。"
+}
+
 select_language() {
     echo -e "${BLUE}Please select a language / 请选择语言:${PLAIN}"
     echo "1. English"
@@ -36,39 +131,24 @@ select_language() {
 
     case $lang_choice in
         1)
-            source <(curl -sL https://raw.githubusercontent.com/spiritLHLS/ চর/main/language/xray_manager_en.sh)
+            load_lang_en
             ;;
         2)
-            source <(curl -sL https://raw.githubusercontent.com/spiritLHLS/ চর/main/language/xray_manager_zh.sh)
+            load_lang_zh
             ;;
         *)
             echo -e "${RED}Invalid selection, defaulting to English.${PLAIN}"
-            source <(curl -sL https://raw.githubusercontent.com/spiritLHLS/ চর/main/language/xray_manager_en.sh)
+            load_lang_en
             ;;
     esac
 }
 
 # --- Function Definitions ---
 
-# Print colored information
-color_echo() {
-    echo -e "${!1}${2}${PLAIN}"
-}
+color_echo() { echo -e "${!1}${2}${PLAIN}"; }
+check_root() { if [ "$EUID" -ne 0 ]; then color_echo RED "$ERROR_MUST_BE_ROOT"; exit 1; fi; }
+pause() { read -rp "$PRESS_ENTER_TO_CONTINUE"; }
 
-# Check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        color_echo RED "$ERROR_MUST_BE_ROOT"
-        exit 1
-    fi
-}
-
-# Pause script and wait for user input
-pause() {
-    read -rp "$PRESS_ENTER_TO_CONTINUE"
-}
-
-# URL encode a string
 url_encode() {
     local string="$1"
     local encoded=""
@@ -83,75 +163,40 @@ url_encode() {
     echo "$encoded"
 }
 
-# Get public IP address
 get_public_ip() {
     color_echo YELLOW "$DETECTING_IP"
-    IP_SERVICES=(
-        "https://ipinfo.io/ip"
-        "https://api.ipify.org"
-        "https://icanhazip.com"
-        "https://checkip.amazonaws.com"
-    )
-    PUBLIC_IP=""
-    for service in "${IP_SERVICES[@]}"; do
-        IP_CANDIDATE=$(curl -s -A "Mozilla/5.0" --connect-timeout 5 "$service")
-        if [[ "$IP_CANDIDATE" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-            PUBLIC_IP=$IP_CANDIDATE
-            break
-        fi
-    done
-
+    PUBLIC_IP=$(curl -s -4 --connect-timeout 5 https://ipinfo.io/ip || curl -s -4 --connect-timeout 5 https://api.ipify.org)
     if [ -z "$PUBLIC_IP" ]; then
         color_echo RED "$ERROR_IP_DETECTION_FAILED"
         exit 1
     fi
-    color_echo GREEN "$SERVER_IP_IS: $PUBLIC_IP"
+    color_echo GREEN "$SERVER_IP_IS $PUBLIC_IP"
 }
 
-# Install Xray
 install_xray() {
     color_echo BLUE "$INSTALLING_XRAY"
-    if command -v xray &>/dev/null; then
-        color_echo GREEN "$XRAY_ALREADY_INSTALLED"
-    fi
+    if command -v xray &>/dev/null; then color_echo GREEN "$XRAY_ALREADY_INSTALLED"; fi
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    if ! command -v xray &>/dev/null; then
-        color_echo RED "$ERROR_XRAY_INSTALL_FAILED"
-        exit 1
-    fi
+    if ! command -v xray &>/dev/null; then color_echo RED "$ERROR_XRAY_INSTALL_FAILED"; exit 1; fi
     systemctl enable xray
     color_echo GREEN "$SUCCESS_XRAY_INSTALLED"
 }
 
-# Configure Xray and generate node information
 configure_and_generate_links() {
     color_echo BLUE "$CONFIGURING_XRAY"
-
-    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT
-    VLESS_PORT=${VLESS_PORT:-443}
-    read -rp "$PROMPT_SS_PORT" SS_PORT
-    SS_PORT=${SS_PORT:-8443}
+    read -rp "$PROMPT_VLESS_PORT" VLESS_PORT; VLESS_PORT=${VLESS_PORT:-443}
+    read -rp "$PROMPT_SS_PORT" SS_PORT; SS_PORT=${SS_PORT:-8443}
     read -rp "$PROMPT_SNI" SNI
-    if [ -z "$SNI" ]; then
-        color_echo RED "$ERROR_SNI_EMPTY"
-        return 1
-    fi
+    if [ -z "$SNI" ]; then color_echo RED "$ERROR_SNI_EMPTY"; return 1; fi
     read -rp "$PROMPT_SNIFFING" SNIFFING_CHOICE
-    SNIFFING_ENABLED="false"
-    if [[ "${SNIFFING_CHOICE,,}" == "y" ]]; then
-        SNIFFING_ENABLED="true"
-    fi
+    [[ "${SNIFFING_CHOICE,,}" == "y" ]] && SNIFFING_ENABLED="true" || SNIFFING_ENABLED="false"
 
     UUID=$(xray uuid)
     KEY_PAIR=$(xray x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -i "private" | cut -d':' -f2 | xargs)
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -i "public" | cut -d':' -f2 | xargs)
-
-    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        color_echo RED "$ERROR_KEY_GENERATION_FAILED"
-        return 1
-    fi
-
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep 'Private key' | awk '{print $3}')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep 'Public key' | awk '{print $3}')
+    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then color_echo RED "$ERROR_KEY_GENERATION_FAILED"; return 1; fi
+    
     SHORT_ID=$(openssl rand -hex 8)
     SS_METHOD="2022-blake3-aes-128-gcm"
     SS_PASSWORD=$(openssl rand -base64 16)
@@ -160,130 +205,70 @@ configure_and_generate_links() {
     color_echo YELLOW "$WRITING_CONFIG"
     cat > "$XRAY_CONFIG_FILE" <<EOF
 {
-  "log": { "loglevel": "warning" },
-  "inbounds": [
-    {
-      "listen": "0.0.0.0", "port": ${VLESS_PORT}, "protocol": "vless",
-      "settings": {
-        "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "tcp", "security": "reality",
-        "realitySettings": {
-          "show": false, "dest": "${SNI}:443", "xver": 0,
-          "serverNames": [ "${SNI}" ],
-          "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ]
-        }
-      },
-      "sniffing": {
-        "enabled": ${SNIFFING_ENABLED},
-        "destOverride": ["http", "tls"]
-      }
+  "log": { "loglevel": "warning" }, "inbounds": [
+    { "listen": "0.0.0.0", "port": ${VLESS_PORT}, "protocol": "vless",
+      "settings": { "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
+      "streamSettings": { "network": "tcp", "security": "reality",
+        "realitySettings": { "show": false, "dest": "${SNI}:443", "xver": 0, "serverNames": [ "${SNI}" ], "privateKey": "${PRIVATE_KEY}", "shortIds": [ "${SHORT_ID}" ] }
+      }, "sniffing": { "enabled": ${SNIFFING_ENABLED}, "destOverride": ["http", "tls"] }
     },
-    {
-      "listen": "0.0.0.0", "port": ${SS_PORT}, "protocol": "shadowsocks",
-      "settings": { "method": "${SS_METHOD}", "password": "${SS_PASSWORD}" },
-      "streamSettings": { "network": "tcp" }
+    { "listen": "0.0.0.0", "port": ${SS_PORT}, "protocol": "shadowsocks",
+      "settings": { "method": "${SS_METHOD}", "password": "${SS_PASSWORD}" }, "streamSettings": { "network": "tcp" }
     }
-  ],
-  "outbounds": [ { "protocol": "freedom", "tag": "direct" }, { "protocol": "blackhole", "tag": "blocked" } ]
+  ], "outbounds": [ { "protocol": "freedom", "tag": "direct" }, { "protocol": "blackhole", "tag": "blocked" } ]
 }
 EOF
 
     get_public_ip
     SERVER_HOSTNAME=$(hostname)
     cat > "$NODE_INFO_FILE" <<EOF
-VLESS_PORT="${VLESS_PORT}"
-SS_PORT="${SS_PORT}"
-UUID="${UUID}"
-PUBLIC_KEY="${PUBLIC_KEY}"
-SHORT_ID="${SHORT_ID}"
-SNI="${SNI}"
-FINGERPRINT="${FINGERPRINT}"
-SS_METHOD="${SS_METHOD}"
-SS_PASSWORD="${SS_PASSWORD}"
-SERVER_IP="${PUBLIC_IP}"
-HOSTNAME="${SERVER_HOSTNAME}"
+VLESS_PORT="${VLESS_PORT}"; SS_PORT="${SS_PORT}"; UUID="${UUID}"; PUBLIC_KEY="${PUBLIC_KEY}"; SHORT_ID="${SHORT_ID}"; SNI="${SNI}"; FINGERPRINT="${FINGERPRINT}"; SS_METHOD="${SS_METHOD}"; SS_PASSWORD="${SS_PASSWORD}"; SERVER_IP="${PUBLIC_IP}"; HOSTNAME="${SERVER_HOSTNAME}"
 EOF
 
     color_echo GREEN "$SUCCESS_CONFIG_WRITTEN"
-
     color_echo YELLOW "$CONFIGURING_FIREWALL"
-    if command -v ufw &>/dev/null; then
-        ufw allow ${VLESS_PORT}/tcp >/dev/null 2>&1
-        ufw allow ${SS_PORT}/tcp >/dev/null 2>&1
-    elif command -v firewall-cmd &>/dev/null; then
-        firewall-cmd --zone=public --add-port=${VLESS_PORT}/tcp --permanent >/dev/null 2>&1
-        firewall-cmd --zone=public --add-port=${SS_PORT}/tcp --permanent >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-    fi
+    if command -v ufw &>/dev/null; then ufw allow ${VLESS_PORT}/tcp >/dev/null 2>&1 && ufw allow ${SS_PORT}/tcp >/dev/null 2>&1;
+    elif command -v firewall-cmd &>/dev/null; then firewall-cmd --permanent --add-port=${VLESS_PORT}/tcp >/dev/null 2>&1 && firewall-cmd --permanent --add-port=${SS_PORT}/tcp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1; fi
 
     systemctl restart xray
-    if systemctl is-active --quiet xray; then
-        color_echo GREEN "$SUCCESS_XRAY_STARTED"
-    else
-        color_echo RED "$ERROR_XRAY_START_FAILED"
-        return 1
-    fi
-
+    if systemctl is-active --quiet xray; then color_echo GREEN "$SUCCESS_XRAY_STARTED"; else color_echo RED "$ERROR_XRAY_START_FAILED"; return 1; fi
     view_links
 }
 
-# View node information
 view_links() {
-    if [ ! -f "$NODE_INFO_FILE" ]; then
-        color_echo RED "$ERROR_NODE_FILE_NOT_FOUND"
-        return
-    fi
-
+    if [ ! -f "$NODE_INFO_FILE" ]; then color_echo RED "$ERROR_NODE_FILE_NOT_FOUND"; return; fi
     source "$NODE_INFO_FILE"
-
     VLESS_REMARK_ENCODED=$(url_encode "${HOSTNAME}")
     SS_REMARK_ENCODED=$(url_encode "${HOSTNAME}-SS")
-
     VLESS_LINK="vless://${UUID}@${SERVER_IP}:${VLESS_PORT}?encryption=none&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${VLESS_REMARK_ENCODED}"
-
     SS_USER_INFO_B64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${SS_USER_INFO_B64}@${SERVER_IP}:${SS_PORT}#${SS_REMARK_ENCODED}"
 
     color_echo GREEN "$NODE_INFO_HEADER"
-    color_echo YELLOW "$VLESS_NODE_LINK"
-    echo "${VLESS_LINK}"
-    echo ""
-    color_echo YELLOW "$SS_NODE_LINK"
-    echo "${SS_LINK}"
+    color_echo YELLOW "$VLESS_NODE_LINK"; echo "${VLESS_LINK}"; echo ""
+    color_echo YELLOW "$SS_NODE_LINK"; echo "${SS_LINK}"
     color_echo GREEN "$NODE_INFO_FOOTER"
 }
 
-# Uninstall Xray
 uninstall_xray() {
     read -rp "$PROMPT_UNINSTALL_CONFIRM" confirm
-    if [[ "${confirm,,}" != "y" ]]; then
-        color_echo YELLOW "$UNINSTALL_CANCELLED"
-        return
-    fi
-
-    systemctl stop xray
-    systemctl disable xray
+    if [[ "${confirm,,}" != "y" ]]; then color_echo YELLOW "$UNINSTALL_CANCELLED"; return; fi
+    systemctl stop xray && systemctl disable xray
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge
     rm -rf "$XRAY_CONFIG_DIR"
     color_echo GREEN "$SUCCESS_XRAY_UNINSTALLED"
 }
 
-# Main menu
 show_menu() {
     clear
-    color_echo GREEN "$MENU_HEADER_1"
-    color_echo GREEN "$MENU_HEADER_2"
-    color_echo GREEN "$MENU_HEADER_1"
-    color_echo BLUE "  1. $MENU_OPTION_1"
-    color_echo BLUE "  2. $MENU_OPTION_2"
-    color_echo BLUE "  3. $MENU_OPTION_3"
-    color_echo BLUE "  4. $MENU_OPTION_4"
-    color_echo BLUE "  5. $MENU_OPTION_5"
-    color_echo YELLOW "  6. $MENU_OPTION_6"
-    color_echo PLAIN "  0. $MENU_OPTION_0"
+    color_echo GREEN "$MENU_HEADER_1"; color_echo GREEN "$MENU_HEADER_2"; color_echo GREEN "$MENU_HEADER_1"
+    echo -e "  ${BLUE}1. $MENU_OPTION_1"
+    echo -e "  ${BLUE}2. $MENU_OPTION_2"
+    echo -e "  ${BLUE}3. $MENU_OPTION_3"
+    echo -e "  ${BLUE}4. $MENU_OPTION_4"
+    echo -e "  ${BLUE}5. $MENU_OPTION_5"
+    echo -e "  ${YELLOW}6. $MENU_OPTION_6"
+    echo -e "  ${PLAIN}0. $MENU_OPTION_0"
     color_echo GREEN "$MENU_HEADER_1"
     read -rp "$PROMPT_MENU_CHOICE" choice
 
@@ -302,6 +287,4 @@ show_menu() {
 # --- Script Entry Point ---
 check_root
 select_language
-while true; do
-    show_menu
-done
+while true; do show_menu; done
